@@ -1,0 +1,154 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ==========================================
+// Masters
+// ==========================================
+
+model Center {
+  id            String   @id @default(uuid())
+  name          String   @unique
+  code          String   @unique
+  totalMembers  Int      @default(0)
+  centerTime    String?
+  repaymentType String   @default("WEEKLY")
+  disbursMode   String   @default("CASH")
+  areaLocality  String?
+  isActive      Boolean  @default(true)
+  
+  employeeId    String?
+  employee      Staff?   @relation(fields: [employeeId], references: [id])
+  
+  branches      Branch[]
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model Branch {
+  id        String   @id @default(uuid())
+  name      String
+  code      String   @unique
+  address   String?
+  phone     String?
+  isActive  Boolean  @default(true)
+  
+  centerId  String
+  center    Center   @relation(fields: [centerId], references: [id])
+  
+  staffs    Staff[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Role {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  isActive  Boolean  @default(true)
+  
+  staffs    Staff[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Menu {
+  id          String   @id @default(uuid())
+  name        String   @unique // e.g. "Branches", "Staffs"
+  path        String?  // e.g. "/admin/masters/branches"
+  icon        String?
+  parentId    String?
+  parent      Menu?    @relation("MenuToMenu", fields: [parentId], references: [id])
+  children    Menu[]   @relation("MenuToMenu")
+  
+  permissions StaffMenu[]
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Staff {
+  id        String   @id @default(uuid())
+  name      String
+  email     String?  @unique
+  phone     String   @unique
+  password  String   @default("password123") // Default for now
+  isActive  Boolean  @default(true)
+  
+  branchId  String?
+  branch    Branch?  @relation(fields: [branchId], references: [id])
+  
+  roleId    String?
+  role      Role?    @relation(fields: [roleId], references: [id])
+  
+  menus     StaffMenu[]
+  loans     Loan[]   // If a staff is linked to a loan process (optional)
+  centers   Center[] // Centers managed by this staff
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model StaffMenu {
+  id        String   @id @default(uuid())
+  staffId   String
+  staff     Staff    @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  menuId    String
+  menu      Menu     @relation(fields: [menuId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  
+  @@unique([staffId, menuId])
+}
+
+model LoanPackage {
+  id           String   @id @default(uuid())
+  name         String   @unique
+  interestRate Float
+  durationDays Int
+  frequency    String   @default("DAILY") // "DAILY", "WEEKLY", "MONTHLY"
+  isActive     Boolean  @default(true)
+  
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// ==========================================
+// Transactionals
+// ==========================================
+
+model Loan {
+  id           String    @id @default(uuid())
+  amount       Float     // Loan Amount
+  interestRate Float     // Vaddi vegitham (Interest)
+  status       String    @default("PENDING") // "PENDING", "APPROVED", "ACTIVE", "CLOSED"
+  startDate    DateTime?
+  endDate      DateTime?
+  
+  staffId      String
+  staff        Staff     @relation(fields: [staffId], references: [id])
+  
+  payments     Payment[] // Intha loan-ku katta patta EMIs
+  
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+model Payment {
+  id          String   @id @default(uuid())
+  amount      Float    // EMI Amount paid
+  paymentDate DateTime @default(now())
+  status      String   @default("COMPLETED") // "PENDING", "COMPLETED", "FAILED"
+  
+  loanId      String
+  loan        Loan     @relation(fields: [loanId], references: [id])
+  
+  createdAt   DateTime @default(now())
+}
