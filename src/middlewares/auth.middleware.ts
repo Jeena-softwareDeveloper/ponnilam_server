@@ -1,12 +1,14 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import { PrismaClient } from '@prisma/client';
 
-// Extend Express Request interface to include user payload
+const prisma = new PrismaClient();
+
 export interface AuthRequest extends Request {
   user?: any;
 }
 
-export const authenticateToken = (req: AuthRequest, res: Response, next: NextFunction): any => {
+export const authenticateToken = async (req: AuthRequest, res: Response, next: NextFunction): Promise<any> => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1]; // Format: "Bearer TOKEN"
 
@@ -15,10 +17,54 @@ export const authenticateToken = (req: AuthRequest, res: Response, next: NextFun
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret');
-    req.user = decoded;
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret') as any;
+
+    // Super Admin Fallback
+    if (decoded.id === 'env-admin') {
+      req.user = {
+        id: 'env-admin',
+        name: 'Super Admin',
+        role: { name: 'Super Admin' },
+        branchId: null
+      };
+      return next();
+    }
+
+    // Lookup staff in DB to get role and branch details
+    const staff = await prisma.staff.findUnique({
+      where: { id: decoded.id },
+      include: { role: true, area: true }
+    });
+
+    if (!staff) {
+      return res.status(401).json({ error: 'Access denied. User not found.' });
+    }
+
+    if (!staff.isActive) {
+      return res.status(403).json({ error: 'Access denied. User account is inactive.' });
+    }
+
+    req.user = staff;
     next();
   } catch (error) {
     return res.status(403).json({ error: 'Invalid token.' });
   }
+};
+
+export const branchScope = (req: AuthRequest, res: Response, next: NextFunction) => {
+  if (req.user?.role?.name !== 'Super Admin') {
+    if (req.user?.branchId) {
+      req.query.branchId = req.user.branchId;
+      if (req.method === 'POST' || req.method === 'PUT') {
+        req.body.branchId = req.user.branchId;
+      }
+    }
+    if (req.user?.areaId) {
+      req.query.areaId = req.user.areaId;
+      if (req.method === 'POST' || req.method === 'PUT') {
+        req.body.areaId = req.user.areaId;
+      }
+    }
+  }
+  next();
 };

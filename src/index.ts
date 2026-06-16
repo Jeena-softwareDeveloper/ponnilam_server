@@ -10,6 +10,18 @@ import roleRoutes from './modules/roles/role.routes';
 import staffRoutes from './modules/staffs/staff.routes';
 import menuRoutes from './modules/menus/menu.routes';
 import loanPackageRoutes from './modules/loanPackages/loanPackage.routes';
+import areaRoutes from './modules/areas/area.routes';
+import stateRoutes from './modules/states/state.routes';
+import districtRoutes from './modules/districts/district.routes';
+import customerRoutes from './modules/customers/customer.routes';
+import loanRoutes from './modules/loans/loan.routes';
+import collectionRoutes from './modules/collections/collection.routes';
+import reportRoutes from './modules/reports/report.routes';
+import dashboardRoutes from './modules/dashboard/dashboard.routes';
+
+// Import Middlewares
+import { authenticateToken, branchScope } from './middlewares/auth.middleware';
+import { auditMiddleware } from './middlewares/audit.middleware';
 
 dotenv.config();
 
@@ -21,12 +33,33 @@ app.use(express.json());
 
 // Main Routes Setup
 app.use('/api/v1/auth', authRoutes);
-app.use('/api/v1/masters/centers', centerRoutes);
-app.use('/api/v1/masters/branches', branchRoutes);
-app.use('/api/v1/masters/roles', roleRoutes);
-app.use('/api/v1/masters/staffs', staffRoutes);
-app.use('/api/v1/masters/menus', menuRoutes);
-app.use('/api/v1/masters/loan-packages', loanPackageRoutes);
+
+// Protect all masters routes with authenticateToken
+app.use('/api/v1/masters', authenticateToken);
+
+// Apply Branch Scoping (for Branch Users)
+app.use('/api/v1/masters', branchScope);
+
+// Apply specific routes and audit logs
+app.use('/api/v1/masters/centers', auditMiddleware('Center'), centerRoutes);
+app.use('/api/v1/masters/areas', auditMiddleware('Area'), areaRoutes);
+app.use('/api/v1/masters/branches', auditMiddleware('Branch'), branchRoutes);
+app.use('/api/v1/masters/states', auditMiddleware('State'), stateRoutes);
+app.use('/api/v1/masters/districts', auditMiddleware('District'), districtRoutes);
+app.use('/api/v1/masters/roles', auditMiddleware('Role'), roleRoutes);
+app.use('/api/v1/masters/staffs', auditMiddleware('Staff'), staffRoutes);
+app.use('/api/v1/masters/menus', auditMiddleware('Menu'), menuRoutes);
+app.use('/api/v1/masters/loan-packages', auditMiddleware('LoanPackage'), loanPackageRoutes);
+
+// Customer Routes (Can be under /customers directly or /masters/customers)
+// The prompt implies it's a new Phase, so we can group it under /customers
+// But we still want it protected and branch-scoped. 
+// We'll put it under a new prefix /api/v1/customers that applies the middlewares.
+app.use('/api/v1/customers', authenticateToken, branchScope, auditMiddleware('Customer'), customerRoutes);
+app.use('/api/v1/loans', authenticateToken, branchScope, auditMiddleware('Loan'), loanRoutes);
+app.use('/api/v1/collections', authenticateToken, branchScope, auditMiddleware('Collection'), collectionRoutes);
+app.use('/api/v1/reports', authenticateToken, branchScope, auditMiddleware('Report'), reportRoutes);
+app.use('/api/v1/dashboard', authenticateToken, branchScope, dashboardRoutes);
 
 // Base route
 app.get('/', (req, res) => {
