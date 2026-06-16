@@ -1,18 +1,33 @@
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
 
 export const getStaffs = async (req: Request, res: Response): Promise<any> => {
   try {
-    const { areaId } = req.query;
+    const { areaId, branchId } = req.query;
+    
+    let whereClause: any = {};
+    if (areaId) {
+      whereClause.areaId = String(areaId);
+    }
+    if (branchId) {
+      whereClause.OR = [
+        { branchId: String(branchId) },
+        { area: { branchId: String(branchId) } }
+      ];
+    }
+
     const staffs = await prisma.staff.findMany({
-      where: areaId ? { areaId: String(areaId) } : undefined,
+      where: Object.keys(whereClause).length > 0 ? whereClause : undefined,
       include: { area: true, role: true, branch: true },
       orderBy: { name: 'asc' },
     });
-    return res.status(200).json(staffs);
+    
+    // Filter out super admin explicitly
+    const filteredStaffs = staffs.filter(s => s.username !== 'admin' && s.role?.name !== 'Super Admin');
+    return res.status(200).json(filteredStaffs);
   } catch (error) {
     console.error('Error fetching staffs:', error);
     return res.status(500).json({ error: 'Internal server error' });
@@ -24,11 +39,12 @@ export const createStaff = async (req: Request, res: Response): Promise<any> => 
     const { name, username, phone, email, areaId, branchId, roleId, password } = req.body;
     if (!name || !phone) return res.status(400).json({ error: 'Name and phone are required' });
     
-    let hashedPassword = 'password123';
+    let hashedPassword = '';
     if (password) {
       hashedPassword = await bcrypt.hash(password, 10);
     } else {
-      hashedPassword = await bcrypt.hash('password123', 10);
+      const defaultPass = username || phone;
+      hashedPassword = await bcrypt.hash(defaultPass, 10);
     }
 
     const staff = await prisma.staff.create({
@@ -81,6 +97,69 @@ export const updateStaff = async (req: Request, res: Response): Promise<any> => 
   } catch (error: any) {
     if (error.code === 'P2025') return res.status(404).json({ error: 'Staff not found' });
     console.error('Error updating staff:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+export const deleteStaff = async (req: Request, res: Response): Promise<any> => {
+  try {
+    const id = String(req.params.id);
+    await prisma.staff.delete({ where: { id } });
+    return res.status(200).json({ message: 'Staff deleted successfully' });
+  } catch (error: any) {
+    if (error.code === 'P2025') return res.status(404).json({ error: 'Staff not found' });
+    if (error.code === 'P2003') return res.status(400).json({ error: 'Cannot delete staff because it has associated records' });
+    console.error('Error deleting staff:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+export const getRequests = async (req: Request, res: Response): Promise<any> => {
+  try {
+    const notifications = await prisma.notification.findMany({
+      where: { type: 'PASSWORD_RESET', isRead: false },
+      orderBy: { createdAt: 'desc' }
+    });
+    return res.status(200).json(notifications);
+  } catch (error) {
+    console.error('Error fetching requests:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+export const resolveResetRequest = async (req: Request, res: Response): Promise<any> => {
+  try {
+    const id = String(req.params.id);
+    
+    const notification = await prisma.notification.findUnique({ where: { id } });
+    if (!notification || !notification.referenceId) {
+      return res.status(404).json({ error: 'Notification or staff reference not found' });
+    }
+
+    const staff = await prisma.staff.findUnique({ where: { id: notification.referenceId } });
+    if (!staff) {
+      return res.status(404).json({ error: 'Staff not found' });
+    }
+
+    // Reset password to username (or phone if no username)
+    const defaultPass = staff.username || staff.phone;
+    const hashedPassword = await bcrypt.hash(defaultPass, 10);
+
+    // Update staff and mark notification as read in a transaction
+    await prisma.$transaction([
+      prisma.staff.update({
+        where: { id: staff.id },
+        data: { password: hashedPassword }
+      }),
+      prisma.notification.update({
+        where: { id },
+        data: { isRead: true }
+      })
+    ]);
+
+    return res.status(200).json({ message: 'Password reset successfully' });
+  } catch (error) {
+    console.error('Error resolving request:', error);
     return res.status(500).json({ error: 'Internal server error' });
   }
 };

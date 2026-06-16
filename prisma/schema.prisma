@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -84,6 +84,7 @@ model Center {
   centerTime    String?
   repaymentType String   @default("WEEKLY")
   disbursMode   String   @default("CASH")
+  totalMembers  Int      @default(0)
   isActive      Boolean  @default(true)
   
   areaId        String
@@ -379,4 +380,16 @@ model AuditLog {
   staff     Staff?   @relation(fields: [staffId], references: [id])
   
   createdAt DateTime @default(now())
+}
+
+model Notification {
+  id          String   @id @default(uuid())
+  type        String   // e.g. "PASSWORD_RESET"
+  title       String
+  message     String
+  isRead      Boolean  @default(false)
+  referenceId String?  // e.g. Staff ID who requested it
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }

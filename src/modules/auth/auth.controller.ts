@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
@@ -24,7 +24,6 @@ export const login = async (req: Request, res: Response): Promise<any> => {
     }
 
     // 2. Database Check
-    // username can be phone, email, or username
     const staff = await prisma.staff.findFirst({
       where: {
         OR: [
@@ -45,13 +44,14 @@ export const login = async (req: Request, res: Response): Promise<any> => {
     }
 
     // Compare passwords
-    // Note: For now, we support plain text fallback if bcrypt fails (during migration),
-    // but we should always hash passwords on creation.
     let isMatch = false;
+    let isFirstLogin = false;
     if (staff.password.startsWith('$2b$') || staff.password.startsWith('$2a$')) {
       isMatch = await bcrypt.compare(password, staff.password);
+      isFirstLogin = (await bcrypt.compare(staff.username || '', staff.password)) || (await bcrypt.compare(staff.phone || '', staff.password));
     } else {
       isMatch = (password === staff.password);
+      isFirstLogin = (staff.password === staff.username) || (staff.password === staff.phone);
     }
 
     if (!isMatch) {
@@ -64,6 +64,14 @@ export const login = async (req: Request, res: Response): Promise<any> => {
       process.env.JWT_SECRET || 'fallback_secret',
       { expiresIn: '1d' }
     );
+
+    if (isFirstLogin) {
+      return res.status(200).json({ 
+        message: 'Password change required', 
+        forcePasswordChange: true, 
+        token 
+      });
+    }
 
     // Audit Log the login
     await prisma.auditLog.create({
@@ -98,35 +106,108 @@ export const getAuthMenus = async (req: Request, res: Response): Promise<any> =>
     const user = (req as any).user;
     if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
-    // Super Admin gets all menus
-    if (user.role?.name === 'Super Admin') {
-      const menus = await prisma.menu.findMany({
-        orderBy: { name: 'asc' },
+    if (user.id === 'env-admin') {
+      const allMenus = await prisma.menu.findMany({
+        orderBy: { name: 'asc' }
       });
-      return res.status(200).json(menus);
+      return res.status(200).json(allMenus);
     }
 
-    // Regular staff gets menus assigned via StaffMenu
-    const staffMenus = await prisma.staffMenu.findMany({
-      where: { staffId: user.id },
-      include: { menu: true },
-      orderBy: { menu: { name: 'asc' } }
+    const staff = await prisma.staff.findUnique({
+      where: { id: user.id },
+      include: {
+        role: true,
+        menus: { include: { menu: true } },
+        branch: { include: { menus: { include: { menu: true } } } }
+      }
     });
 
-    const menus = staffMenus.map(sm => sm.menu);
+    if (!staff) return res.status(404).json({ error: 'Staff not found' });
 
-    // Always ensure Branch Dashboard is present for everyone as the first item
-    const hasBranchDashboard = menus.some(m => m.name === 'Branch Dashboard' || m.path === '/admin/branch-dashboard');
-    if (!hasBranchDashboard) {
-      const dashboardMenu = await prisma.menu.findFirst({ where: { name: 'Branch Dashboard' } });
-      if (dashboardMenu) {
-        menus.unshift(dashboardMenu);
-      }
+    if (staff.role?.name === 'Super Admin') {
+      const allMenus = await prisma.menu.findMany({
+        orderBy: { name: 'asc' }
+      });
+      return res.status(200).json(allMenus);
     }
 
-    return res.status(200).json(menus);
+    let allowedMenus: any[] = [];
+    const staffSpecificMenus = staff.menus.map((sm: any) => sm.menu);
+    if (staffSpecificMenus.length > 0) {
+      allowedMenus = staffSpecificMenus;
+    } else if (staff.branch && staff.branch.menus) {
+      allowedMenus = staff.branch.menus.map((bm: any) => bm.menu);
+    }
+
+    return res.status(200).json(allowedMenus);
   } catch (error) {
     console.error('Error fetching auth menus:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+export const changePassword = async (req: Request, res: Response): Promise<any> => {
+  try {
+    const user = (req as any).user;
+    if (!user || !user.id || user.id === 'env-admin') {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    
+    const { newPassword } = req.body;
+    if (!newPassword || newPassword.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    await prisma.staff.update({
+      where: { id: user.id },
+      data: { password: hashedPassword }
+    });
+
+    return res.status(200).json({ message: 'Password updated successfully' });
+  } catch (error) {
+    console.error('Change password error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+export const forgotPassword = async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { username } = req.body;
+    if (!username) return res.status(400).json({ error: 'Username is required' });
+
+    const staff = await prisma.staff.findFirst({
+      where: {
+        OR: [
+          { username },
+          { phone: username },
+          { email: username }
+        ]
+      }
+    });
+
+    if (!staff) {
+      return res.status(200).json({ message: 'If the username exists, a reset request has been sent to the admin.' });
+    }
+
+    const existing = await prisma.notification.findFirst({
+      where: { referenceId: staff.id, type: 'PASSWORD_RESET', isRead: false }
+    });
+
+    if (!existing) {
+      await prisma.notification.create({
+        data: {
+          type: 'PASSWORD_RESET',
+          title: 'Password Reset Request',
+          message: `Staff member ${staff.name} (${staff.username || staff.phone}) requested a password reset.`,
+          referenceId: staff.id
+        }
+      });
+    }
+
+    return res.status(200).json({ message: 'If the username exists, a reset request has been sent to the admin.' });
+  } catch (error) {
+    console.error('Forgot password error:', error);
     return res.status(500).json({ error: 'Internal server error' });
   }
 };

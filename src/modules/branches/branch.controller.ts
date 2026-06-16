@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
 
@@ -127,6 +127,18 @@ export const updateBranch = async (req: Request, res: Response): Promise<any> =>
   } catch (error: any) {
     if (error.code === 'P2025') return res.status(404).json({ error: 'Branch not found' });
     console.error('Error updating branch:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+};
+export const deleteBranch = async (req: Request, res: Response): Promise<any> => {
+  try {
+    const id = String(req.params.id);
+    await prisma.branch.delete({ where: { id } });
+    return res.status(200).json({ message: 'Branch deleted successfully' });
+  } catch (error: any) {
+    if (error.code === 'P2025') return res.status(404).json({ error: 'Branch not found' });
+    if (error.code === 'P2003') return res.status(400).json({ error: 'Cannot delete branch because it contains associated areas, centers, or staff' });
+    console.error('Error deleting branch:', error);
     return res.status(500).json({ error: 'Internal server error' });
   }
 };

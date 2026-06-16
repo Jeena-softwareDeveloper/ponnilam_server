@@ -5,7 +5,10 @@ const prisma = new PrismaClient();
 
 export const getRoles = async (req: Request, res: Response): Promise<any> => {
   try {
-    const roles = await prisma.role.findMany({ orderBy: { name: 'asc' } });
+    const roles = await prisma.role.findMany({ 
+      where: { name: { not: 'Super Admin' } },
+      orderBy: { name: 'asc' } 
+    });
     return res.status(200).json(roles);
   } catch (error) {
     console.error('Error fetching roles:', error);
@@ -41,6 +44,19 @@ export const updateRole = async (req: Request, res: Response): Promise<any> => {
   } catch (error: any) {
     if (error.code === 'P2025') return res.status(404).json({ error: 'Role not found' });
     console.error('Error updating role:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+export const deleteRole = async (req: Request, res: Response): Promise<any> => {
+  try {
+    const id = String(req.params.id);
+    await prisma.role.delete({ where: { id } });
+    return res.status(200).json({ message: 'Role deleted successfully' });
+  } catch (error: any) {
+    if (error.code === 'P2025') return res.status(404).json({ error: 'Role not found' });
+    if (error.code === 'P2003') return res.status(400).json({ error: 'Cannot delete role because it is assigned to staff' });
+    console.error('Error deleting role:', error);
     return res.status(500).json({ error: 'Internal server error' });
   }
 };

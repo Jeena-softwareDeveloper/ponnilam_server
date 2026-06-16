@@ -56,3 +56,15 @@ export const updateLoanPackage = async (req: Request, res: Response): Promise<an
     return res.status(500).json({ error: 'Internal server error' });
   }
 };
+export const deleteLoanPackage = async (req: Request, res: Response): Promise<any> => {
+  try {
+    const id = String(req.params.id);
+    await prisma.loanPackage.delete({ where: { id } });
+    return res.status(200).json({ message: 'Loan package deleted successfully' });
+  } catch (error: any) {
+    if (error.code === 'P2025') return res.status(404).json({ error: 'Loan package not found' });
+    if (error.code === 'P2003') return res.status(400).json({ error: 'Cannot delete loan package because it has active loans' });
+    console.error('Error deleting loan package:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+};

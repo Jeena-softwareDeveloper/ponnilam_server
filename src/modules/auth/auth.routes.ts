@@ -1,10 +1,12 @@
 import { Router } from 'express';
-import { login, getAuthMenus } from './auth.controller';
+import { login, getAuthMenus, changePassword, forgotPassword } from './auth.controller';
 import { authenticateToken } from '../../middlewares/auth.middleware';
 
 const router = Router();
 
 router.post('/login', login);
-router.get('/me/menus', authenticateToken, getAuthMenus);
+router.post('/change-password', authenticateToken, changePassword);
+router.post('/forgot-password', forgotPassword);
+router.get('/menus', authenticateToken, getAuthMenus);
 
 export default router;

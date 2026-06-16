@@ -26,10 +26,53 @@ async function main() {
   });
 
   // 2. Create Menus
-  const dashboardMenu = await prisma.menu.upsert({
+  // TOP LEVEL
+  await prisma.menu.upsert({
     where: { name: 'Dashboard' },
     update: {},
     create: { name: 'Dashboard', path: '/admin/dashboard', icon: 'LayoutDashboard' },
+  });
+
+  await prisma.menu.upsert({
+    where: { name: 'Branch Dashboard' },
+    update: {},
+    create: { name: 'Branch Dashboard', path: '/admin/branch-dashboard', icon: 'LayoutDashboard' },
+  });
+
+  await prisma.menu.upsert({
+    where: { name: 'Customers' },
+    update: {},
+    create: { name: 'Customers', path: '/admin/customers', icon: 'Users' },
+  });
+
+  await prisma.menu.upsert({
+    where: { name: 'Customer Ledger' },
+    update: {},
+    create: { name: 'Customer Ledger', path: '/admin/customer-ledger', icon: 'BookOpen' },
+  });
+
+  await prisma.menu.upsert({
+    where: { name: 'Loans' },
+    update: {},
+    create: { name: 'Loans', path: '/admin/loans', icon: 'Banknote' },
+  });
+
+  await prisma.menu.upsert({
+    where: { name: 'Collections' },
+    update: {},
+    create: { name: 'Collections', path: '/admin/collections', icon: 'Wallet' },
+  });
+
+  await prisma.menu.upsert({
+    where: { name: 'Reports' },
+    update: {},
+    create: { name: 'Reports', path: '/admin/reports', icon: 'PieChart' },
+  });
+
+  await prisma.menu.upsert({
+    where: { name: 'Settings' },
+    update: {},
+    create: { name: 'Settings', path: '/admin/settings', icon: 'Settings' },
   });
 
   const mastersMenu = await prisma.menu.upsert({
@@ -38,95 +81,133 @@ async function main() {
     create: { name: 'Masters', path: '', icon: 'Database' },
   });
 
-  const centersMenu = await prisma.menu.upsert({
+  // MASTERS SUB-MENUS
+  await prisma.menu.upsert({
+    where: { name: 'States' },
+    update: { parentId: mastersMenu.id },
+    create: { name: 'States', path: '/admin/masters/states', icon: 'MapPin', parentId: mastersMenu.id },
+  });
+
+  await prisma.menu.upsert({
+    where: { name: 'Districts' },
+    update: { parentId: mastersMenu.id },
+    create: { name: 'Districts', path: '/admin/masters/districts', icon: 'MapPin', parentId: mastersMenu.id },
+  });
+
+  await prisma.menu.upsert({
+    where: { name: 'Areas' },
+    update: { parentId: mastersMenu.id },
+    create: { name: 'Areas', path: '/admin/masters/areas', icon: 'MapPin', parentId: mastersMenu.id },
+  });
+
+  await prisma.menu.upsert({
     where: { name: 'Centers' },
-    update: {},
+    update: { parentId: mastersMenu.id },
     create: { name: 'Centers', path: '/admin/masters/centers', icon: 'MapPin', parentId: mastersMenu.id },
   });
 
-  const branchesMenu = await prisma.menu.upsert({
+  await prisma.menu.upsert({
     where: { name: 'Branches' },
-    update: {},
+    update: { parentId: mastersMenu.id },
     create: { name: 'Branches', path: '/admin/masters/branches', icon: 'Building2', parentId: mastersMenu.id },
   });
 
-  const rolesMenu = await prisma.menu.upsert({
+  await prisma.menu.upsert({
     where: { name: 'Roles' },
-    update: {},
+    update: { parentId: mastersMenu.id },
     create: { name: 'Roles', path: '/admin/masters/roles', icon: 'Shield', parentId: mastersMenu.id },
   });
 
-  const staffsMenu = await prisma.menu.upsert({
+  await prisma.menu.upsert({
     where: { name: 'Staffs' },
-    update: {},
+    update: { parentId: mastersMenu.id },
     create: { name: 'Staffs', path: '/admin/masters/staffs', icon: 'Users', parentId: mastersMenu.id },
   });
 
-  const loanPackagesMenu = await prisma.menu.upsert({
+  await prisma.menu.upsert({
     where: { name: 'Loan Packages' },
-    update: {},
+    update: { parentId: mastersMenu.id },
     create: { name: 'Loan Packages', path: '/admin/masters/loan-packages', icon: 'Package', parentId: mastersMenu.id },
   });
 
-  // 3. Create Centers
-  const center1 = await prisma.center.upsert({
-    where: { code: 'CHN' },
-    update: {
-      name: 'ESWARI RAJIV GANDHI NAGAR', 
-      totalMembers: 6,
-      centerTime: '6.30AM',
-      repaymentType: 'WEEKLY',
-      disbursMode: 'CASH',
-      areaLocality: 'ATHANI ROAD',
-    },
-    create: { 
-      name: 'ESWARI RAJIV GANDHI NAGAR', 
-      code: 'CHN', 
-      totalMembers: 6,
-      centerTime: '6.30AM',
-      repaymentType: 'WEEKLY',
-      disbursMode: 'CASH',
-      areaLocality: 'ATHANI ROAD',
-      isActive: true 
-    },
+  await prisma.menu.upsert({
+    where: { name: 'Menus' },
+    update: { parentId: mastersMenu.id },
+    create: { name: 'Menus', path: '/admin/masters/menus', icon: 'LayoutList', parentId: mastersMenu.id },
   });
 
-  const center2 = await prisma.center.upsert({
-    where: { code: 'MDU' },
-    update: {
-      name: 'GURUNATHAL DASARIPALAYAM', 
-      totalMembers: 12,
-      centerTime: '8.00AM',
-      repaymentType: 'MONTHLY',
-      disbursMode: 'BANK',
-      areaLocality: 'NORTH STREET',
-    },
-    create: { 
-      name: 'GURUNATHAL DASARIPALAYAM', 
-      code: 'MDU', 
-      totalMembers: 12,
-      centerTime: '8.00AM',
-      repaymentType: 'MONTHLY',
-      disbursMode: 'BANK',
-      areaLocality: 'NORTH STREET',
-      isActive: true 
-    },
+  await prisma.menu.upsert({
+    where: { name: 'Permissions' },
+    update: { parentId: mastersMenu.id },
+    create: { name: 'Permissions', path: '/admin/masters/permissions', icon: 'Shield', parentId: mastersMenu.id },
   });
 
-  // 4. Create Branches
+  // 3. Create Branches
   const branch1 = await prisma.branch.upsert({
     where: { code: 'BR-001' },
     update: {},
-    create: { name: 'Anna Nagar Branch', code: 'BR-001', address: '123 Main St', phone: '9876543210', isActive: true, centerId: center1.id },
+    create: { name: 'Anna Nagar Branch', code: 'BR-001', location: '123 Main St', phone: '9876543210', isActive: true },
   });
 
   const branch2 = await prisma.branch.upsert({
     where: { code: 'BR-002' },
     update: {},
-    create: { name: 'T Nagar Branch', code: 'BR-002', address: '45 South Mada St', phone: '9876543211', isActive: true, centerId: center1.id },
+    create: { name: 'T Nagar Branch', code: 'BR-002', location: '45 South Mada St', phone: '9876543211', isActive: true },
   });
 
-  // 5. Create Super Admin Staff
+  // 4. Create Areas
+  const area1 = await prisma.area.upsert({
+    where: { name: 'Anna Nagar Area' },
+    update: {},
+    create: { name: 'Anna Nagar Area', branchId: branch1.id, isActive: true },
+  });
+
+  const area2 = await prisma.area.upsert({
+    where: { name: 'T Nagar Area' },
+    update: {},
+    create: { name: 'T Nagar Area', branchId: branch2.id, isActive: true },
+  });
+
+  // 5. Create Centers
+  const center1 = await prisma.center.upsert({
+    where: { name: 'ESWARI RAJIV GANDHI NAGAR' },
+    update: {
+      centerTime: '6.30AM',
+      repaymentType: 'WEEKLY',
+      disbursMode: 'CASH',
+      areaId: area1.id,
+    },
+    create: { 
+      name: 'ESWARI RAJIV GANDHI NAGAR', 
+      code: 'CHN', 
+      centerTime: '6.30AM',
+      repaymentType: 'WEEKLY',
+      disbursMode: 'CASH',
+      areaId: area1.id,
+      isActive: true 
+    },
+  });
+
+  const center2 = await prisma.center.upsert({
+    where: { name: 'GURUNATHAL DASARIPALAYAM' },
+    update: {
+      centerTime: '8.00AM',
+      repaymentType: 'MONTHLY',
+      disbursMode: 'BANK',
+      areaId: area2.id,
+    },
+    create: { 
+      name: 'GURUNATHAL DASARIPALAYAM', 
+      code: 'MDU', 
+      centerTime: '8.00AM',
+      repaymentType: 'MONTHLY',
+      disbursMode: 'BANK',
+      areaId: area2.id,
+      isActive: true 
+    },
+  });
+
+  // 6. Create Super Admin Staff
   const adminStaff = await prisma.staff.upsert({
     where: { phone: '9000000000' },
     update: {},
@@ -141,11 +222,10 @@ async function main() {
     },
   });
 
-  // 6. Map All Menus to Super Admin Staff
-  const allMenus = [dashboardMenu, mastersMenu, centersMenu, branchesMenu, rolesMenu, staffsMenu, loanPackagesMenu];
+  // 7. Map ALL Menus to Super Admin Staff
+  const allMenus = await prisma.menu.findMany();
   
   for (const menu of allMenus) {
-    // We use a query first because upsert with @@unique needs specific where structure, but findFirst is safer
     const existingPerm = await prisma.staffMenu.findFirst({
       where: { staffId: adminStaff.id, menuId: menu.id }
     });
@@ -157,7 +237,7 @@ async function main() {
     }
   }
 
-  // 7. Create Loan Packages
+  // 8. Create Loan Packages
   await prisma.loanPackage.upsert({
     where: { name: '100 Days Daily' },
     update: {},

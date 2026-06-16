@@ -5,7 +5,15 @@ const prisma = new PrismaClient();
 
 export const getCenters = async (req: Request, res: Response): Promise<any> => {
   try {
+    const { branchId } = req.query;
+    const whereClause: any = {};
+    
+    if (branchId) {
+      whereClause.area = { branchId: String(branchId) };
+    }
+    
     const centers = await prisma.center.findMany({
+      where: whereClause,
       include: { employee: true, area: true },
       orderBy: { name: 'asc' },
     });
@@ -18,7 +26,7 @@ export const getCenters = async (req: Request, res: Response): Promise<any> => {
 
 export const createCenter = async (req: Request, res: Response): Promise<any> => {
   try {
-    const { name, code, centerTime, repaymentType, disbursMode, areaId, employeeId } = req.body;
+    const { name, code, centerTime, repaymentType, disbursMode, areaId, employeeId, totalMembers } = req.body;
     if (!name || !areaId) return res.status(400).json({ error: 'Name and Area are required' });
     const center = await prisma.center.create({
       data: {
@@ -27,6 +35,7 @@ export const createCenter = async (req: Request, res: Response): Promise<any> =>
         centerTime: centerTime || null,
         repaymentType: repaymentType || 'WEEKLY',
         disbursMode: disbursMode || 'CASH',
+        totalMembers: totalMembers ? parseInt(totalMembers) : 0,
         areaId,
         employeeId: employeeId || null,
       },
@@ -43,10 +52,10 @@ export const createCenter = async (req: Request, res: Response): Promise<any> =>
 export const updateCenter = async (req: Request, res: Response): Promise<any> => {
   try {
     const { id } = req.params;
-    const { name, code, centerTime, repaymentType, disbursMode, areaId, employeeId, isActive } = req.body as {
+    const { name, code, centerTime, repaymentType, disbursMode, areaId, employeeId, isActive, totalMembers } = req.body as {
       name?: string; code?: string; centerTime?: string;
       repaymentType?: string; disbursMode?: string; areaId?: string;
-      employeeId?: string; isActive?: boolean;
+      employeeId?: string; isActive?: boolean; totalMembers?: any;
     };
     const center = await prisma.center.update({
       where: { id: String(id) },
@@ -59,6 +68,7 @@ export const updateCenter = async (req: Request, res: Response): Promise<any> =>
         ...(areaId !== undefined && { areaId }),
         ...(employeeId !== undefined && { employeeId: employeeId || null }),
         ...(isActive !== undefined && { isActive }),
+        ...(totalMembers !== undefined && { totalMembers: parseInt(totalMembers) }),
       },
       include: { employee: true },
     });
@@ -66,6 +76,19 @@ export const updateCenter = async (req: Request, res: Response): Promise<any> =>
   } catch (error: any) {
     if (error.code === 'P2025') return res.status(404).json({ error: 'Center not found' });
     console.error('Error updating center:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+export const deleteCenter = async (req: Request, res: Response): Promise<any> => {
+  try {
+    const id = String(req.params.id);
+    await prisma.center.delete({ where: { id } });
+    return res.status(200).json({ message: 'Center deleted successfully' });
+  } catch (error: any) {
+    if (error.code === 'P2025') return res.status(404).json({ error: 'Center not found' });
+    if (error.code === 'P2003') return res.status(400).json({ error: 'Cannot delete center because it has associated data' });
+    console.error('Error deleting center:', error);
     return res.status(500).json({ error: 'Internal server error' });
   }
 };
