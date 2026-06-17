@@ -26,7 +26,8 @@ export const createLoan = async (req: Request, res: Response) => {
       salary, interest, additional, otherIncome, totalIncome,
       food, rent, mobile, education, loanObligation, otherExpense, totalExpense,
       eligibleEmi,
-      disbursementDate, firstDueDate
+      disbursementDate, firstDueDate,
+      packageId, applicationDate, remarks, status, guarantors
     } = req.body;
 
     const loanNumber = await generateLoanNo();
@@ -49,9 +50,23 @@ export const createLoan = async (req: Request, res: Response) => {
 
         eligibleEmi: Number(eligibleEmi || 0),
         
+        
         disbursementDate: disbursementDate ? new Date(disbursementDate) : null,
         firstDueDate: firstDueDate ? new Date(firstDueDate) : null,
-        status: 'APPROVED' // Default to approved on creation for this NBFC
+        packageId: packageId || null,
+        applicationDate: applicationDate ? new Date(applicationDate) : null,
+        remarks: remarks || null,
+        status: status || 'PENDING',
+        
+        ...(guarantors && guarantors.length > 0 && {
+          guarantors: {
+            create: guarantors.map((g: any) => ({
+              name: g.name,
+              relationship: g.relationship,
+              mobileNo: g.mobileNo
+            }))
+          }
+        })
       }
     });
 

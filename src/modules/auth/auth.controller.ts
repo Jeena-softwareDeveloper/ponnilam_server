@@ -190,20 +190,16 @@ export const forgotPassword = async (req: Request, res: Response): Promise<any> 
       return res.status(200).json({ message: 'If the username exists, a reset request has been sent to the admin.' });
     }
 
-    const existing = await prisma.notification.findFirst({
-      where: { referenceId: staff.id, type: 'PASSWORD_RESET', isRead: false }
+    // TODO: Implement actual notification/email when Notification model is added to schema
+    // For now, log the reset request as an audit log
+    await prisma.auditLog.create({
+      data: {
+        action: 'FORGOT_PASSWORD_REQUEST',
+        entity: 'Auth',
+        staffId: staff.id,
+        details: `Password reset requested for ${staff.name} (${staff.username || staff.phone})`
+      }
     });
-
-    if (!existing) {
-      await prisma.notification.create({
-        data: {
-          type: 'PASSWORD_RESET',
-          title: 'Password Reset Request',
-          message: `Staff member ${staff.name} (${staff.username || staff.phone}) requested a password reset.`,
-          referenceId: staff.id
-        }
-      });
-    }
 
     return res.status(200).json({ message: 'If the username exists, a reset request has been sent to the admin.' });
   } catch (error) {

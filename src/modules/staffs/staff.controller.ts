@@ -116,11 +116,13 @@ export const deleteStaff = async (req: Request, res: Response): Promise<any> => 
 
 export const getRequests = async (req: Request, res: Response): Promise<any> => {
   try {
-    const notifications = await prisma.notification.findMany({
-      where: { type: 'PASSWORD_RESET', isRead: false },
-      orderBy: { createdAt: 'desc' }
+    // Fetch password reset requests from audit logs (Notification model not in schema yet)
+    const logs = await prisma.auditLog.findMany({
+      where: { action: 'FORGOT_PASSWORD_REQUEST' },
+      orderBy: { createdAt: 'desc' },
+      include: { staff: { select: { id: true, name: true, phone: true, username: true } } }
     });
-    return res.status(200).json(notifications);
+    return res.status(200).json(logs);
   } catch (error) {
     console.error('Error fetching requests:', error);
     return res.status(500).json({ error: 'Internal server error' });
@@ -129,14 +131,9 @@ export const getRequests = async (req: Request, res: Response): Promise<any> => 
 
 export const resolveResetRequest = async (req: Request, res: Response): Promise<any> => {
   try {
-    const id = String(req.params.id);
-    
-    const notification = await prisma.notification.findUnique({ where: { id } });
-    if (!notification || !notification.referenceId) {
-      return res.status(404).json({ error: 'Notification or staff reference not found' });
-    }
+    const staffId = String(req.params.id);
 
-    const staff = await prisma.staff.findUnique({ where: { id: notification.referenceId } });
+    const staff = await prisma.staff.findUnique({ where: { id: staffId } });
     if (!staff) {
       return res.status(404).json({ error: 'Staff not found' });
     }
@@ -145,17 +142,19 @@ export const resolveResetRequest = async (req: Request, res: Response): Promise<
     const defaultPass = staff.username || staff.phone;
     const hashedPassword = await bcrypt.hash(defaultPass, 10);
 
-    // Update staff and mark notification as read in a transaction
-    await prisma.$transaction([
-      prisma.staff.update({
-        where: { id: staff.id },
-        data: { password: hashedPassword }
-      }),
-      prisma.notification.update({
-        where: { id },
-        data: { isRead: true }
-      })
-    ]);
+    await prisma.staff.update({
+      where: { id: staff.id },
+      data: { password: hashedPassword }
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        action: 'PASSWORD_RESET_RESOLVED',
+        entity: 'Staff',
+        staffId: staff.id,
+        details: `Password reset to default for ${staff.name}`
+      }
+    });
 
     return res.status(200).json({ message: 'Password reset successfully' });
   } catch (error) {

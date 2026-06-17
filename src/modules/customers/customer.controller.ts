@@ -39,6 +39,7 @@ export const createCustomer = async (req: Request, res: Response) => {
         maritalStatus: general.maritalStatus,
         address: general.address,
         residenceType: general.residenceType,
+        yearsInResidence: general.yearsInResidence ? Number(general.yearsInResidence) : null,
         occupation: general.occupation,
         phone: general.phone,
         mobile: general.mobile,
@@ -63,11 +64,16 @@ export const createCustomer = async (req: Request, res: Response) => {
 
         kyc: kyc && Object.keys(kyc).length > 0 ? {
           create: {
-            kycType: kyc.kycType,
-            aadhar: kyc.aadhar,
-            pan: kyc.pan,
-            voterId: kyc.voterId,
-            issueDate: kyc.issueDate ? new Date(kyc.issueDate) : null
+            idProof1Type: kyc.idProof1Type,
+            idProof1No: kyc.idProof1No,
+            idProof1Name: kyc.idProof1Name,
+            idProof1Dob: kyc.idProof1Dob ? new Date(kyc.idProof1Dob) : null,
+            idProof1IssueDate: kyc.idProof1IssueDate ? new Date(kyc.idProof1IssueDate) : null,
+            idProof2Type: kyc.idProof2Type,
+            idProof2No: kyc.idProof2No,
+            idProof2Name: kyc.idProof2Name,
+            idProof2Dob: kyc.idProof2Dob ? new Date(kyc.idProof2Dob) : null,
+            idProof2IssueDate: kyc.idProof2IssueDate ? new Date(kyc.idProof2IssueDate) : null,
           }
         } : undefined,
 
@@ -112,6 +118,7 @@ export const updateCustomer = async (req: Request, res: Response) => {
         maritalStatus: general.maritalStatus,
         address: general.address,
         residenceType: general.residenceType,
+        yearsInResidence: general.yearsInResidence ? Number(general.yearsInResidence) : null,
         occupation: general.occupation,
         phone: general.phone,
         mobile: general.mobile,
@@ -144,20 +151,30 @@ export const updateCustomer = async (req: Request, res: Response) => {
 
         kyc: kyc ? {
           upsert: {
-            create: {
-              kycType: kyc.kycType,
-              aadhar: kyc.aadhar,
-              pan: kyc.pan,
-              voterId: kyc.voterId,
-              issueDate: kyc.issueDate ? new Date(kyc.issueDate) : null
-            },
-            update: {
-              kycType: kyc.kycType,
-              aadhar: kyc.aadhar,
-              pan: kyc.pan,
-              voterId: kyc.voterId,
-              issueDate: kyc.issueDate ? new Date(kyc.issueDate) : null
-            }
+              create: {
+                idProof1Type: kyc.idProof1Type,
+                idProof1No: kyc.idProof1No,
+                idProof1Name: kyc.idProof1Name,
+                idProof1Dob: kyc.idProof1Dob ? new Date(kyc.idProof1Dob) : null,
+                idProof1IssueDate: kyc.idProof1IssueDate ? new Date(kyc.idProof1IssueDate) : null,
+                idProof2Type: kyc.idProof2Type,
+                idProof2No: kyc.idProof2No,
+                idProof2Name: kyc.idProof2Name,
+                idProof2Dob: kyc.idProof2Dob ? new Date(kyc.idProof2Dob) : null,
+                idProof2IssueDate: kyc.idProof2IssueDate ? new Date(kyc.idProof2IssueDate) : null,
+              },
+              update: {
+                ...(kyc.idProof1Type !== undefined && { idProof1Type: kyc.idProof1Type }),
+                ...(kyc.idProof1No !== undefined && { idProof1No: kyc.idProof1No }),
+                ...(kyc.idProof1Name !== undefined && { idProof1Name: kyc.idProof1Name }),
+                ...(kyc.idProof1Dob !== undefined && { idProof1Dob: kyc.idProof1Dob ? new Date(kyc.idProof1Dob) : null }),
+                ...(kyc.idProof1IssueDate !== undefined && { idProof1IssueDate: kyc.idProof1IssueDate ? new Date(kyc.idProof1IssueDate) : null }),
+                ...(kyc.idProof2Type !== undefined && { idProof2Type: kyc.idProof2Type }),
+                ...(kyc.idProof2No !== undefined && { idProof2No: kyc.idProof2No }),
+                ...(kyc.idProof2Name !== undefined && { idProof2Name: kyc.idProof2Name }),
+                ...(kyc.idProof2Dob !== undefined && { idProof2Dob: kyc.idProof2Dob ? new Date(kyc.idProof2Dob) : null }),
+                ...(kyc.idProof2IssueDate !== undefined && { idProof2IssueDate: kyc.idProof2IssueDate ? new Date(kyc.idProof2IssueDate) : null }),
+              }
           }
         } : undefined,
 
@@ -199,7 +216,7 @@ export const updateCustomer = async (req: Request, res: Response) => {
 
 export const getCustomers = async (req: Request, res: Response) => {
   try {
-    const { search, areaId } = req.query;
+    const { search, areaId, centerId } = req.query;
 
     const where: any = {};
     
@@ -216,6 +233,10 @@ export const getCustomers = async (req: Request, res: Response) => {
       where.areaId = { in: res.locals.areaIds };
     } else if (areaId) {
       where.areaId = String(areaId);
+    }
+
+    if (centerId) {
+      where.group = { centerId: String(centerId) };
     }
 
     const customers = await prisma.customer.findMany({

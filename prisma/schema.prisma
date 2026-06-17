@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -205,6 +205,8 @@ model LoanPackage {
   frequency    String  @default("DAILY") // "DAILY", "WEEKLY", "MONTHLY"
   isActive     Boolean @default(true)
 
+  loans        Loan[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -222,6 +224,7 @@ model Customer {
   maritalStatus String?
   address       String?
   residenceType String?
+  yearsInResidence Int?
   occupation    String?
   phone         String?
   mobile        String?
@@ -255,11 +258,20 @@ model Customer {
 
 model CustomerKyc {
   id        String    @id @default(uuid())
-  kycType   String?
-  aadhar    String?
-  pan       String?
-  voterId   String?
-  issueDate DateTime?
+
+  // Primary ID (Proof 1)
+  idProof1Type      String?
+  idProof1No        String?
+  idProof1Name      String?
+  idProof1Dob       DateTime?
+  idProof1IssueDate DateTime?
+
+  // Secondary ID (Proof 2)
+  idProof2Type      String?
+  idProof2No        String?
+  idProof2Name      String?
+  idProof2Dob       DateTime?
+  idProof2IssueDate DateTime?
 
   customerId String   @unique
   customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
@@ -307,6 +319,12 @@ model Loan {
   amount       Float // Loan Amount
   interestRate Float? // Optional interest rate
   status       String @default("PENDING") // PENDING, APPROVED, DROPPED, ACTIVE, CLOSED
+  remarks      String? // Approver remarks
+
+  applicationDate DateTime?
+  
+  packageId String?
+  package   LoanPackage? @relation(fields: [packageId], references: [id])
 
   // Loan Entry Details
   noOfDues          Int   @default(0)
@@ -347,6 +365,7 @@ model Loan {
 
   schedules   LoanSchedule[]
   collections Collection[]
+  guarantors  LoanGuarantor[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -415,4 +434,17 @@ model Notification {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model LoanGuarantor {
+  id           String @id @default(uuid())
+  name         String
+  relationship String
+  mobileNo     String
+
+  loanId       String
+  loan         Loan   @relation(fields: [loanId], references: [id], onDelete: Cascade)
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 }

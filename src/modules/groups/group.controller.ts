@@ -54,7 +54,7 @@ export const createGroup = async (req: Request, res: Response): Promise<any> => 
 
 export const updateGroup = async (req: Request, res: Response): Promise<any> => {
   try {
-    const { id } = req.params;
+    const id = String(req.params.id);
     const { groupName, groupCode, meetingDay, centerId, isActive } = req.body;
     const group = await prisma.group.update({
       where: { id },
@@ -77,7 +77,7 @@ export const updateGroup = async (req: Request, res: Response): Promise<any> => 
 
 export const deleteGroup = async (req: Request, res: Response): Promise<any> => {
   try {
-    const { id } = req.params;
+    const id = String(req.params.id);
     await prisma.group.delete({ where: { id } });
     return res.status(200).json({ message: 'Group deleted successfully' });
   } catch (error: any) {
