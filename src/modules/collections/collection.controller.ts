@@ -111,21 +111,24 @@ export const createCollection = async (req: Request, res: Response): Promise<any
 
 export const getCollections = async (req: Request, res: Response) => {
   try {
-    const { loanId, staffId } = req.query;
+    const { loanId, staffId, branchId } = req.query;
     const where: any = {};
     if (loanId) where.loanId = String(loanId);
     if (staffId) where.staffId = String(staffId);
 
-    // Apply branch scoping
+    // Branch-scoped staff: filter by their area IDs
     if (res.locals.areaIds && res.locals.areaIds.length > 0) {
       where.loan = { customer: { areaId: { in: res.locals.areaIds } } };
+    } else if (branchId && branchId !== 'all') {
+      // Super Admin selected a specific branch from the dropdown
+      where.loan = { customer: { area: { branchId: String(branchId) } } };
     }
 
     const collections = await prisma.collection.findMany({
       where,
       include: {
         loan: {
-          include: { customer: true }
+          include: { customer: { include: { area: { include: { branch: true } } } } }
         },
         staff: true
       },

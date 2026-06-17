@@ -3,73 +3,62 @@ import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
-export const getDashboardStats = async (req: Request, res: Response) => {
+// ─── Shared helpers ─────────────────────────────────────────────────────────
+
+function buildWhere(areaId?: string, branchId?: string) {
+  const whereCustomer: any = areaId ? { areaId } : branchId ? { area: { branchId } } : {};
+  const whereLoan: any = areaId ? { customer: { areaId } } : branchId ? { customer: { area: { branchId } } } : {};
+  const whereCollection: any = areaId ? { loan: { customer: { areaId } } } : branchId ? { loan: { customer: { area: { branchId } } } } : {};
+  return { whereCustomer, whereLoan, whereCollection };
+}
+
+function dateBoundaries() {
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const todayEnd = new Date(todayStart); todayEnd.setDate(todayEnd.getDate() + 1);
+  const yesterdayStart = new Date(todayStart); yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+  const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+  return { now, todayStart, todayEnd, yesterdayStart, thisMonthStart, lastMonthEnd };
+}
+
+function calcTrend(current: number, previous: number) {
+  if (previous === 0) return current > 0 ? 100 : 0;
+  return Number((((current - previous) / previous) * 100).toFixed(2));
+}
+
+// ─── 1. KPIs (fast counts only) ─────────────────────────────────────────────
+
+export const getDashboardKpis = async (req: Request, res: Response) => {
   try {
-    const areaId = req.query.areaId as string;
-    const branchId = req.query.branchId as string;
+    const { areaId, branchId } = req.query as Record<string, string>;
+    const { whereCustomer, whereLoan, whereCollection } = buildWhere(areaId, branchId);
+    const { todayStart, todayEnd, yesterdayStart, lastMonthEnd } = dateBoundaries();
 
-    const whereCustomer: any = areaId ? { areaId } : branchId ? { area: { branchId } } : {};
-    const whereLoan: any = areaId ? { customer: { areaId } } : branchId ? { customer: { area: { branchId } } } : {};
-    const whereCollection: any = areaId ? { loan: { customer: { areaId } } } : branchId ? { loan: { customer: { area: { branchId } } } } : {};
-
-    const now = new Date();
-    
-    // Today boundaries
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const todayEnd = new Date(todayStart);
-    todayEnd.setDate(todayEnd.getDate() + 1);
-    
-    const yesterdayStart = new Date(todayStart);
-    yesterdayStart.setDate(yesterdayStart.getDate() - 1);
-    
-    // Month boundaries
-    const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
-
-    // ==========================================
-    // 1. KPIs & Trends
-    // ==========================================
     const [
       customersTotal, customersLastMonth,
       activeLoansTotal, activeLoansLastMonth,
       outstandingTotal, outstandingLastMonth,
-      collectionToday, collectionYesterday
+      collectionToday, collectionYesterday,
+      overdueCount
     ] = await Promise.all([
       prisma.customer.count({ where: whereCustomer }),
       prisma.customer.count({ where: { ...whereCustomer, createdAt: { lte: lastMonthEnd } } }),
-      
       prisma.loan.count({ where: { ...whereLoan, status: 'ACTIVE' } }),
       prisma.loan.count({ where: { ...whereLoan, status: 'ACTIVE', createdAt: { lte: lastMonthEnd } } }),
-      
       prisma.loan.aggregate({ where: { ...whereLoan, status: 'ACTIVE' }, _sum: { outstandingAmount: true } }),
       prisma.loan.aggregate({ where: { ...whereLoan, status: 'ACTIVE', createdAt: { lte: lastMonthEnd } }, _sum: { outstandingAmount: true } }),
-      
       prisma.collection.aggregate({ where: { ...whereCollection, trnDate: { gte: todayStart, lt: todayEnd } }, _sum: { amount: true } }),
-      prisma.collection.aggregate({ where: { ...whereCollection, trnDate: { gte: yesterdayStart, lt: todayStart } }, _sum: { amount: true } })
+      prisma.collection.aggregate({ where: { ...whereCollection, trnDate: { gte: yesterdayStart, lt: todayStart } }, _sum: { amount: true } }),
+      // Overdue: distinct loanIds with pending schedules before today
+      prisma.loanSchedule.groupBy({
+        by: ['loanId'],
+        where: { loan: whereLoan, status: 'PENDING', dueDate: { lt: todayStart } },
+        _count: { loanId: true }
+      })
     ]);
 
-    // Overdue Calculations
-    // Get loans with pending schedules before today
-    const overdueSchedules = await prisma.loanSchedule.findMany({
-      where: {
-        loan: whereLoan,
-        status: 'PENDING',
-        dueDate: { lt: todayStart }
-      },
-      include: { loan: true }
-    });
-
-    const uniqueOverdueLoans = new Set(overdueSchedules.map(s => s.loanId));
-    const overdueTotal = uniqueOverdueLoans.size;
-
-    // Calculate Percentages
-    const calcTrend = (current: number, previous: number) => {
-      if (previous === 0) return current > 0 ? 100 : 0;
-      return Number((((current - previous) / previous) * 100).toFixed(2));
-    };
-
-    const kpis = {
+    res.json({
       totalCustomers: customersTotal,
       customersTrend: calcTrend(customersTotal, customersLastMonth),
       activeLoans: activeLoansTotal,
@@ -78,92 +67,125 @@ export const getDashboardStats = async (req: Request, res: Response) => {
       collectionTrend: calcTrend(collectionToday._sum.amount || 0, collectionYesterday._sum.amount || 0),
       totalOutstanding: outstandingTotal._sum.outstandingAmount || 0,
       outstandingTrend: calcTrend(outstandingTotal._sum.outstandingAmount || 0, outstandingLastMonth._sum.outstandingAmount || 0),
-      overdueLoans: overdueTotal,
-      overdueTrend: 0 // Mock trend since we don't have historical snapshot of overdue easily
-    };
+      overdueLoans: overdueCount.length,
+    });
+  } catch (err) {
+    console.error('Dashboard KPIs Error:', err);
+    res.status(500).json({ error: 'Failed to load KPIs' });
+  }
+};
 
-    // ==========================================
-    // 2. Collection Trend (This Month)
-    // ==========================================
-    const thisMonthCollections = await prisma.collection.findMany({
+// ─── 2. Collection Trend (chart data) ────────────────────────────────────────
+
+export const getDashboardTrend = async (req: Request, res: Response) => {
+  try {
+    const { areaId, branchId } = req.query as Record<string, string>;
+    const { whereCollection } = buildWhere(areaId, branchId);
+    const { now, thisMonthStart } = dateBoundaries();
+
+    const rows = await prisma.collection.findMany({
       where: { ...whereCollection, trnDate: { gte: thisMonthStart } },
       select: { amount: true, trnDate: true }
     });
 
-    // Group by Day
     const trendMap = new Map<string, number>();
-    const daysInMonth = now.getDate(); // Up to today
-    for (let i = 1; i <= daysInMonth; i++) {
-      const dateStr = `${i.toString().padStart(2, '0')} ${now.toLocaleString('default', { month: 'short' })}`;
-      trendMap.set(dateStr, 0);
+    for (let i = 1; i <= now.getDate(); i++) {
+      const key = `${String(i).padStart(2, '0')} ${now.toLocaleString('default', { month: 'short' })}`;
+      trendMap.set(key, 0);
     }
-
-    thisMonthCollections.forEach(c => {
-      const day = new Date(c.trnDate).getDate();
-      const dateStr = `${day.toString().padStart(2, '0')} ${now.toLocaleString('default', { month: 'short' })}`;
-      if (trendMap.has(dateStr)) {
-        trendMap.set(dateStr, trendMap.get(dateStr)! + c.amount);
-      }
+    rows.forEach(c => {
+      const d = new Date(c.trnDate).getDate();
+      const key = `${String(d).padStart(2, '0')} ${now.toLocaleString('default', { month: 'short' })}`;
+      if (trendMap.has(key)) trendMap.set(key, trendMap.get(key)! + c.amount);
     });
 
-    const collectionTrend = Array.from(trendMap.entries()).map(([date, amount]) => ({ date, amount }));
+    res.json(Array.from(trendMap.entries()).map(([date, amount]) => ({ date, amount })));
+  } catch (err) {
+    console.error('Dashboard Trend Error:', err);
+    res.status(500).json({ error: 'Failed to load collection trend' });
+  }
+};
 
-    // ==========================================
-    // 3. Loan Status Overview
-    // ==========================================
-    const closedLoansCount = await prisma.loan.count({ where: { ...whereLoan, status: 'CLOSED' } });
-    
-    // We consider "Active" as Active - Overdue in this chart layout based on screenshot
-    const strictActiveCount = Math.max(0, activeLoansTotal - overdueTotal);
-    
+// ─── 3. Charts: Loan Portfolio + Top Branches ────────────────────────────────
+
+export const getDashboardCharts = async (req: Request, res: Response) => {
+  try {
+    const { areaId, branchId } = req.query as Record<string, string>;
+    const { whereLoan, whereCollection } = buildWhere(areaId, branchId);
+    const { todayStart, thisMonthStart } = dateBoundaries();
+
+    const [activeLoans, closedLoans, overdueGroups, branches] = await Promise.all([
+      prisma.loan.count({ where: { ...whereLoan, status: 'ACTIVE' } }),
+      prisma.loan.count({ where: { ...whereLoan, status: 'CLOSED' } }),
+      prisma.loanSchedule.groupBy({
+        by: ['loanId'],
+        where: { loan: whereLoan, status: 'PENDING', dueDate: { lt: todayStart } },
+        _count: { loanId: true }
+      }),
+      prisma.branch.findMany({
+        where: branchId ? { id: branchId } : {},
+        select: { id: true, name: true }
+      })
+    ]);
+
+    const overdueCount = overdueGroups.length;
+    const strictActive = Math.max(0, activeLoans - overdueCount);
+
     const loanStatus = [
-      { name: 'Active Loans', value: strictActiveCount, color: '#22c55e' }, // green-500
-      { name: 'Closed Loans', value: closedLoansCount, color: '#3b82f6' }, // blue-500
-      { name: 'Overdue Loans', value: overdueTotal, color: '#f59e0b' } // amber-500
+      { name: 'Active Loans', value: strictActive, color: '#22c55e' },
+      { name: 'Closed Loans', value: closedLoans, color: '#3b82f6' },
+      { name: 'Overdue Loans', value: overdueCount, color: '#f59e0b' }
     ];
 
-    // ==========================================
-    // 4. Top 5 Branches (This Month)
-    // ==========================================
-    // Prisma doesn't support nested relation grouping easily, so fetch and aggregate in memory
-    const collectionsWithBranch = await prisma.collection.findMany({
-      where: { ...whereCollection, trnDate: { gte: thisMonthStart } },
-      include: { loan: { include: { customer: { include: { area: { include: { branch: true } } } } } } }
-    });
+    // Top branches — one aggregate per branch (parallelised)
+    const topBranchesRaw = await Promise.all(branches.map(async (b) => {
+      const s = await prisma.collection.aggregate({
+        where: {
+          loan: { customer: { area: areaId ? { id: areaId, branchId: b.id } : { branchId: b.id } } },
+          trnDate: { gte: thisMonthStart }
+        },
+        _sum: { amount: true }
+      });
+      return { name: b.name, amount: s._sum.amount || 0 };
+    }));
 
-    const branchMap = new Map<string, number>();
-    collectionsWithBranch.forEach(c => {
-      const branchName = c.loan?.customer?.area?.branch?.name || 'Unknown Branch';
-      branchMap.set(branchName, (branchMap.get(branchName) || 0) + c.amount);
-    });
-
-    const topBranches = Array.from(branchMap.entries())
-      .map(([name, amount]) => ({ name, amount }))
+    const topBranches = topBranchesRaw
+      .filter(b => b.amount > 0)
       .sort((a, b) => b.amount - a.amount)
       .slice(0, 5);
 
-    // ==========================================
-    // 5. Recent Loans Sanctioned
-    // ==========================================
-    const recentLoans = await prisma.loan.findMany({
-      where: whereLoan,
-      include: { customer: { include: { area: { include: { branch: true } } } } },
-      orderBy: { createdAt: 'desc' },
-      take: 5
-    });
+    res.json({ loanStatus, topBranches });
+  } catch (err) {
+    console.error('Dashboard Charts Error:', err);
+    res.status(500).json({ error: 'Failed to load chart data' });
+  }
+};
 
-    const formattedRecentLoans = recentLoans.map(l => ({
-      id: l.id,
-      loanNumber: l.loanNumber,
-      customerName: l.customer?.name || 'Unknown',
-      branchName: l.customer?.area?.branch?.name || 'Unknown',
-      amount: l.amount,
-      date: l.createdAt
-    }));
+// ─── 4. Recent Activity + Overdue Summary ────────────────────────────────────
 
-    // ==========================================
-    // 6. Overdue Summary
-    // ==========================================
+export const getDashboardActivity = async (req: Request, res: Response) => {
+  try {
+    const { areaId, branchId } = req.query as Record<string, string>;
+    const { whereLoan } = buildWhere(areaId, branchId);
+    const { now, todayStart } = dateBoundaries();
+
+    const [recentLoans, overdueSchedules] = await Promise.all([
+      prisma.loan.findMany({
+        where: whereLoan,
+        select: {
+          id: true, loanNumber: true, amount: true, createdAt: true,
+          customer: { select: { name: true, area: { select: { branch: { select: { name: true } } } } } }
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 5
+      }),
+      prisma.loanSchedule.findMany({
+        where: { loan: whereLoan, status: 'PENDING', dueDate: { lt: todayStart } },
+        select: { loanId: true, dueDate: true, loan: { select: { outstandingAmount: true } } }
+      })
+    ]);
+
+    // Overdue buckets
     const buckets = [
       { label: '1 - 30 Days', min: 1, max: 30, count: 0, amount: 0 },
       { label: '31 - 60 Days', min: 31, max: 60, count: 0, amount: 0 },
@@ -171,42 +193,33 @@ export const getDashboardStats = async (req: Request, res: Response) => {
       { label: '90+ Days', min: 91, max: 99999, count: 0, amount: 0 }
     ];
 
-    // Group overdue schedules by loan to find the oldest overdue days
-    const overdueLoansMap = new Map<string, { daysOverdue: number, outstanding: number }>();
-    
+    const seen = new Map<string, { days: number; outstanding: number }>();
     overdueSchedules.forEach(s => {
-      const days = Math.floor((now.getTime() - new Date(s.dueDate).getTime()) / (1000 * 3600 * 24));
-      if (!overdueLoansMap.has(s.loanId)) {
-        overdueLoansMap.set(s.loanId, { daysOverdue: days, outstanding: s.loan.outstandingAmount });
-      } else {
-        // Find maximum days overdue for this loan
-        const existing = overdueLoansMap.get(s.loanId)!;
-        if (days > existing.daysOverdue) {
-          existing.daysOverdue = days;
-        }
-      }
+      const days = Math.floor((now.getTime() - new Date(s.dueDate).getTime()) / 86400000);
+      if (!seen.has(s.loanId)) seen.set(s.loanId, { days, outstanding: s.loan.outstandingAmount });
+      else if (days > seen.get(s.loanId)!.days) seen.get(s.loanId)!.days = days;
     });
-
-    overdueLoansMap.forEach((data) => {
-      for (const b of buckets) {
-        if (data.daysOverdue >= b.min && data.daysOverdue <= b.max) {
-          b.count += 1;
-          b.amount += data.outstanding;
-          break;
-        }
-      }
+    seen.forEach(({ days, outstanding }) => {
+      const b = buckets.find(bk => days >= bk.min && days <= bk.max);
+      if (b) { b.count++; b.amount += outstanding; }
     });
 
     res.json({
-      kpis,
-      collectionTrend,
-      loanStatus,
-      topBranches,
-      recentLoans: formattedRecentLoans,
+      recentLoans: recentLoans.map(l => ({
+        id: l.id,
+        loanNumber: l.loanNumber,
+        customerName: l.customer?.name || 'Unknown',
+        branchName: l.customer?.area?.branch?.name || 'Unknown',
+        amount: l.amount,
+        date: l.createdAt
+      })),
       overdueSummary: buckets
     });
-  } catch (error) {
-    console.error('Advanced Dashboard Error:', error);
-    res.status(500).json({ error: 'Failed to fetch dashboard stats' });
+  } catch (err) {
+    console.error('Dashboard Activity Error:', err);
+    res.status(500).json({ error: 'Failed to load activity' });
   }
 };
+
+// ─── Legacy combined endpoint (kept for backward compat) ─────────────────────
+export const getDashboardStats = getDashboardKpis;

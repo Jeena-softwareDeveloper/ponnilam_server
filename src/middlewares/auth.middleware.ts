@@ -51,8 +51,10 @@ export const authenticateToken = async (req: AuthRequest, res: Response, next: N
   }
 };
 
-export const branchScope = (req: AuthRequest, res: Response, next: NextFunction) => {
+export const branchScope = async (req: AuthRequest, res: Response, next: NextFunction): Promise<any> => {
   if (req.user?.role?.name !== 'Super Admin') {
+
+    // ─── Force branchId / areaId on query and body ───────────────────────────
     if (req.user?.branchId) {
       req.query.branchId = req.user.branchId;
       if (req.method === 'POST' || req.method === 'PUT') {
@@ -65,6 +67,31 @@ export const branchScope = (req: AuthRequest, res: Response, next: NextFunction)
         req.body.areaId = req.user.areaId;
       }
     }
+
+    // ─── Build res.locals.areaIds for scoped list queries ────────────────────
+    // Controllers use res.locals.areaIds to filter findMany results
+    try {
+      if (req.user?.areaId) {
+        // Staff with a specific area — restrict to that area only
+        res.locals.areaIds = [req.user.areaId];
+      } else if (req.user?.branchId) {
+        // Branch-level staff — restrict to all areas in their branch
+        const areas = await prisma.area.findMany({
+          where: { branchId: req.user.branchId },
+          select: { id: true }
+        });
+        res.locals.areaIds = areas.map((a: { id: string }) => a.id);
+      } else {
+        res.locals.areaIds = [];
+      }
+    } catch (err) {
+      console.error('branchScope areaIds lookup failed:', err);
+      res.locals.areaIds = [];
+    }
+  } else {
+    // Super Admin — no restriction
+    res.locals.areaIds = [];
   }
+
   next();
 };

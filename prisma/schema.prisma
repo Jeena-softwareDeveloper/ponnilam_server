@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -250,11 +250,11 @@ model Customer {
   groupId String?
   group   Group?  @relation(fields: [groupId], references: [id])
 
+  coApplicant CustomerCoApplicant?
   kyc         CustomerKyc?
   bank        CustomerBank?
-  coApplicant CustomerCoApplicant?
-
-  loans Loan[]
+  loans       Loan[]
+  customerLedgers CustomerLedger[]
 
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
@@ -362,6 +362,9 @@ model Loan {
   disbursementDate DateTime?
   firstDueDate     DateTime?
 
+  // Advance Balance Tracker
+  advanceBalance Float @default(0)
+
   customerId String
   customer   Customer @relation(fields: [customerId], references: [id])
 
@@ -371,6 +374,7 @@ model Loan {
   schedules   LoanSchedule[]
   collections Collection[]
   guarantors  LoanGuarantor[]
+  loanLedgers LoanLedger[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -406,10 +410,54 @@ model Collection {
   staffId String?
   staff   Staff?  @relation(fields: [staffId], references: [id])
 
-  schedules LoanSchedule[] // Which schedules were paid by this collection
+  schedules       LoanSchedule[] // Which schedules were paid by this collection
+  customerLedgers CustomerLedger[]
+  loanLedgers     LoanLedger[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// ==========================================
+// Ledgers (Audit Trail)
+// ==========================================
+
+model CustomerLedger {
+  id              String   @id @default(uuid())
+  date            DateTime @default(now())
+  transactionType String   // "Collection", "Disbursement", "Refund"
+  amount          Float
+  openingBalance  Float
+  closingBalance  Float
+  remarks         String?
+  
+  customerId      String
+  customer        Customer @relation(fields: [customerId], references: [id])
+  
+  collectionId    String?
+  collection      Collection? @relation(fields: [collectionId], references: [id])
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model LoanLedger {
+  id              String   @id @default(uuid())
+  date            DateTime @default(now())
+  transactionType String   // "EMI Collection", "Penalty", "Disbursement"
+  amount          Float
+  openingBalance  Float
+  closingBalance  Float
+  remarks         String?
+  
+  loanId          String
+  loan            Loan     @relation(fields: [loanId], references: [id])
+  
+  collectionId    String?
+  collection      Collection? @relation(fields: [collectionId], references: [id])
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 }
 
 // ==========================================

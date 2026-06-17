@@ -139,20 +139,23 @@ export const updateLoanStatus = async (req: Request, res: Response): Promise<any
 
 export const getLoans = async (req: Request, res: Response) => {
   try {
-    const { customerId, status } = req.query;
+    const { customerId, status, branchId } = req.query;
     const where: any = {};
     if (customerId) where.customerId = String(customerId);
     if (status) where.status = String(status);
 
-    // Apply branch scoping for Area (indirectly through customer or staff)
+    // Branch-scoped staff: filter by their area IDs
     if (res.locals.areaIds && res.locals.areaIds.length > 0) {
       where.customer = { areaId: { in: res.locals.areaIds } };
+    } else if (branchId && branchId !== 'all') {
+      // Super Admin selected a specific branch from the dropdown
+      where.customer = { area: { branchId: String(branchId) } };
     }
 
     const loans = await prisma.loan.findMany({
       where,
       include: {
-        customer: true,
+        customer: { include: { area: { include: { branch: true } } } },
         staff: true,
       },
       orderBy: { createdAt: 'desc' }

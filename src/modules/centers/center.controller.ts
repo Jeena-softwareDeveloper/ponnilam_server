@@ -5,11 +5,14 @@ const prisma = new PrismaClient();
 
 export const getCenters = async (req: Request, res: Response): Promise<any> => {
   try {
-    const { branchId } = req.query;
+    const { branchId, staffId } = req.query;
     const whereClause: any = {};
     
     if (branchId) {
       whereClause.area = { branchId: String(branchId) };
+    }
+    if (staffId) {
+      whereClause.employeeId = String(staffId);
     }
     
     const centers = await prisma.center.findMany({
