@@ -141,9 +141,9 @@ export const updateCustomer = async (req: Request, res: Response) => {
     } = req.body;
 
     const existingCustomer = await prisma.customer.findUnique({
-      where: { id },
+      where: { id: id as string },
       include: { area: true }
-    });
+    }) as any;
 
     if (!existingCustomer) {
       return res.status(404).json({ error: 'Customer not found' });

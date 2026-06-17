@@ -191,8 +191,18 @@ export const forgotPassword = async (req: Request, res: Response): Promise<any> 
       return res.status(200).json({ message: 'If the username exists, a reset request has been sent to the admin.' });
     }
 
-    // TODO: Implement actual notification/email when Notification model is added to schema
-    // For now, log the reset request as an audit log
+    // Create a notification for Admins / Branch Managers
+    await prisma.notification.create ( {
+      data: {
+        type: 'PASSWORD_RESET',
+        title: 'Password Reset Request',
+        message: `${staff.name} (${staff.username || staff.phone}) requested a password reset.`,
+        referenceId: staff.id,
+        branchId: staff.branchId, // So Branch Manager can see it
+        status: 'PENDING'
+      }
+    } ) ;
+
     await prisma.auditLog.create({
       data: {
         action: 'FORGOT_PASSWORD_REQUEST',

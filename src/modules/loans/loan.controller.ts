@@ -113,11 +113,10 @@ export const updateLoanStatus = async (req: Request, res: Response): Promise<any
     const { id } = req.params;
     const { status } = req.body;
 
-    // Security check
     const existingLoan = await prisma.loan.findUnique({ 
-      where: { id }, 
+      where: { id: id as string }, 
       include: { customer: { include: { area: true } } } 
-    });
+    }) as any;
     if (!existingLoan) return res.status(404).json({ error: 'Loan not found' });
     
     const user = (req as any).user;
@@ -194,9 +193,9 @@ export const deleteLoan = async (req: Request, res: Response): Promise<any> => {
 
     // Security check
     const existingLoan = await prisma.loan.findUnique({ 
-      where: { id }, 
-      include: { customer: { include: { area: true } } } 
-    });
+      where: { id: id as string },
+      include: { customer: { include: { area: true } } }
+    }) as any;
     if (!existingLoan) return res.status(404).json({ error: 'Loan not found' });
     
     const user = (req as any).user;

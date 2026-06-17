@@ -56,6 +56,7 @@ model Branch {
   areas  Area[]
   staffs Staff[]
   menus  BranchMenu[]
+  notifications Notification[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -435,6 +436,10 @@ model Notification {
   message     String
   isRead      Boolean @default(false)
   referenceId String? // e.g. Staff ID who requested it
+  status      String? // e.g. "PENDING", "APPROVED", "REJECTED"
+
+  branchId    String?
+  branch      Branch? @relation(fields: [branchId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

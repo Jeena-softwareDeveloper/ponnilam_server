@@ -19,6 +19,7 @@ import loanRoutes from './modules/loans/loan.routes';
 import collectionRoutes from './modules/collections/collection.routes';
 import reportRoutes from './modules/reports/report.routes';
 import dashboardRoutes from './modules/dashboard/dashboard.routes';
+import notificationRoutes from './modules/notifications/notifications.routes';
 
 // Import Middlewares
 import { authenticateToken, branchScope } from './middlewares/auth.middleware';
@@ -62,6 +63,7 @@ app.use('/api/v1/loans', authenticateToken, branchScope, auditMiddleware('Loan')
 app.use('/api/v1/collections', authenticateToken, branchScope, auditMiddleware('Collection'), collectionRoutes);
 app.use('/api/v1/reports', authenticateToken, branchScope, auditMiddleware('Report'), reportRoutes);
 app.use('/api/v1/dashboard', authenticateToken, branchScope, dashboardRoutes);
+app.use('/api/v1/notifications', authenticateToken, notificationRoutes);
 
 // Base route
 app.get('/', (req, res) => {
