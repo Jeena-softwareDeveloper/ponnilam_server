@@ -28,6 +28,16 @@ export const createCenter = async (req: Request, res: Response): Promise<any> =>
   try {
     const { name, code, centerTime, repaymentType, disbursMode, areaId, employeeId, totalMembers } = req.body;
     if (!name || !areaId) return res.status(400).json({ error: 'Name and Area are required' });
+    
+    // Security check
+    const user = (req as any).user;
+    if (user?.role?.name !== 'Super Admin' && user?.branchId) {
+      const area = await prisma.area.findUnique({ where: { id: areaId } });
+      if (!area || area.branchId !== user.branchId) {
+        return res.status(403).json({ error: 'Security Violation: Cannot create a center in an area outside your branch.' });
+      }
+    }
+
     const center = await prisma.center.create({
       data: {
         name,
@@ -57,6 +67,24 @@ export const updateCenter = async (req: Request, res: Response): Promise<any> =>
       repaymentType?: string; disbursMode?: string; areaId?: string;
       employeeId?: string; isActive?: boolean; totalMembers?: any;
     };
+
+    // Security check
+    const existingCenter = await prisma.center.findUnique({ where: { id: String(id) }, include: { area: true } });
+    if (!existingCenter) return res.status(404).json({ error: 'Center not found' });
+    
+    const user = (req as any).user;
+    if (user?.role?.name !== 'Super Admin' && user?.branchId) {
+      if (existingCenter.area?.branchId !== user.branchId) {
+        return res.status(403).json({ error: 'Security Violation: Cannot modify a center from another branch.' });
+      }
+      if (areaId && areaId !== existingCenter.areaId) {
+        const newArea = await prisma.area.findUnique({ where: { id: areaId } });
+        if (newArea && newArea.branchId !== user.branchId) {
+          return res.status(403).json({ error: 'Security Violation: Cannot move center to an area outside your branch.' });
+        }
+      }
+    }
+
     const center = await prisma.center.update({
       where: { id: String(id) },
       data: {
@@ -83,6 +111,18 @@ export const updateCenter = async (req: Request, res: Response): Promise<any> =>
 export const deleteCenter = async (req: Request, res: Response): Promise<any> => {
   try {
     const id = String(req.params.id);
+
+    // Security check
+    const existingCenter = await prisma.center.findUnique({ where: { id }, include: { area: true } });
+    if (!existingCenter) return res.status(404).json({ error: 'Center not found' });
+    
+    const user = (req as any).user;
+    if (user?.role?.name !== 'Super Admin' && user?.branchId) {
+      if (existingCenter.area?.branchId !== user.branchId) {
+        return res.status(403).json({ error: 'Security Violation: Cannot delete a center from another branch.' });
+      }
+    }
+
     await prisma.center.delete({ where: { id } });
     return res.status(200).json({ message: 'Center deleted successfully' });
   } catch (error: any) {

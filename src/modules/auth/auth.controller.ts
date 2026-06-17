@@ -91,7 +91,8 @@ export const login = async (req: Request, res: Response): Promise<any> => {
         name: staff.name,
         role: staff.role?.name || 'User',
         area: staff.area?.name || null,
-        branch: staff.branch?.name || staff.area?.branch?.name || null
+        branch: staff.branch?.name || staff.area?.branch?.name || null,
+        branchId: staff.branchId || staff.area?.branchId || null
       }
     });
 

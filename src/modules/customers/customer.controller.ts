@@ -42,6 +42,16 @@ export const createCustomer = async (req: Request, res: Response) => {
       if (existing2) return res.status(400).json({ error: `Customer with ID Proof Number ${kyc.idProof2No} already exists.` });
     }
 
+    // Security Check: Enforce Branch Scoping
+    const user = (req as any).user;
+    if (general?.areaId && user?.role?.name !== 'Super Admin' && user?.branchId) {
+      const area = await prisma.area.findUnique({ where: { id: general.areaId } });
+      if (!area) return res.status(400).json({ error: 'Invalid area selected' });
+      if (area.branchId !== user.branchId) {
+        return res.status(403).json({ error: 'Security Violation: You are not authorized to create entries outside your assigned branch.' });
+      }
+    }
+
     const customerNo = await generateCustomerNo();
 
     const customer = await prisma.customer.create({
@@ -122,7 +132,37 @@ export const createCustomer = async (req: Request, res: Response) => {
 export const updateCustomer = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { general, coApplicant, kyc, bank, others } = req.body;
+    const {
+      general,
+      coApplicant,
+      kyc,
+      bank,
+      others
+    } = req.body;
+
+    const existingCustomer = await prisma.customer.findUnique({
+      where: { id },
+      include: { area: true }
+    });
+
+    if (!existingCustomer) {
+      return res.status(404).json({ error: 'Customer not found' });
+    }
+
+    const user = (req as any).user;
+    if (user?.role?.name !== 'Super Admin' && user?.branchId) {
+      // Check if they have access to the EXISTING customer's branch
+      if (existingCustomer.area?.branchId && existingCustomer.area.branchId !== user.branchId) {
+        return res.status(403).json({ error: 'Security Violation: You are not authorized to modify a customer from another branch.' });
+      }
+      // Check if they are trying to move the customer to a new area outside their branch
+      if (general?.areaId && general.areaId !== existingCustomer.areaId) {
+        const newArea = await prisma.area.findUnique({ where: { id: general.areaId } });
+        if (newArea && newArea.branchId !== user.branchId) {
+          return res.status(403).json({ error: 'Security Violation: Cannot move customer to an area outside your assigned branch.' });
+        }
+      }
+    }
 
     if (kyc?.idProof1No) {
       const existing1 = await prisma.customerKyc.findFirst({
@@ -264,7 +304,7 @@ export const updateCustomer = async (req: Request, res: Response) => {
 
 export const getCustomers = async (req: Request, res: Response) => {
   try {
-    const { search, areaId, centerId } = req.query;
+    const { search, areaId, centerId, branchId } = req.query;
 
     const where: any = {};
     
@@ -276,11 +316,12 @@ export const getCustomers = async (req: Request, res: Response) => {
       ];
     }
     
-    // Support area scoping based on AuthMiddleware (from res.locals.areaIds)
     if (res.locals.areaIds && res.locals.areaIds.length > 0) {
       where.areaId = { in: res.locals.areaIds };
     } else if (areaId) {
       where.areaId = String(areaId);
+    } else if (branchId) {
+      where.area = { branchId: String(branchId) };
     }
 
     if (centerId) {

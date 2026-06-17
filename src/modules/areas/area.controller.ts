@@ -38,6 +38,18 @@ export const updateArea = async (req: Request, res: Response): Promise<any> => {
   try {
     const id = String(req.params.id);
     const { name, branchId, isActive } = req.body;
+    
+    // Security check
+    const existingArea = await prisma.area.findUnique({ where: { id } });
+    if (!existingArea) return res.status(404).json({ error: 'Area not found' });
+    
+    const user = (req as any).user;
+    if (user?.role?.name !== 'Super Admin' && user?.branchId) {
+      if (existingArea.branchId !== user.branchId) {
+        return res.status(403).json({ error: 'Security Violation: Cannot modify an area from another branch.' });
+      }
+    }
+
     const area = await prisma.area.update({
       where: { id },
       data: {
@@ -58,6 +70,17 @@ export const updateArea = async (req: Request, res: Response): Promise<any> => {
 export const deleteArea = async (req: Request, res: Response): Promise<any> => {
   try {
     const id = String(req.params.id);
+
+    const existingArea = await prisma.area.findUnique({ where: { id } });
+    if (!existingArea) return res.status(404).json({ error: 'Area not found' });
+    
+    const user = (req as any).user;
+    if (user?.role?.name !== 'Super Admin' && user?.branchId) {
+      if (existingArea.branchId !== user.branchId) {
+        return res.status(403).json({ error: 'Security Violation: Cannot delete an area from another branch.' });
+      }
+    }
+
     await prisma.area.delete({ where: { id } });
     return res.status(204).send();
   } catch (error: any) {

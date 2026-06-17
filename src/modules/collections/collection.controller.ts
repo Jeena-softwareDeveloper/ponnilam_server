@@ -18,9 +18,18 @@ const generateTrnNo = async () => {
   return `TRN${nextNo}`;
 };
 
-export const createCollection = async (req: Request, res: Response) => {
+export const createCollection = async (req: Request, res: Response): Promise<any> => {
   try {
-    const { loanId, staffId, amount, trnDate, remarks } = req.body;
+    const { loanId, staffId, amount, penalty, trnDate, remarks, trnMode } = req.body;
+
+    // Security check
+    const user = (req as any).user;
+    if (user?.role?.name !== 'Super Admin' && user?.branchId) {
+      const loan = await prisma.loan.findUnique({ where: { id: loanId }, include: { customer: { include: { area: true } } } });
+      if (!loan || loan.customer?.area?.branchId !== user.branchId) {
+        return res.status(403).json({ error: 'Security Violation: Cannot create a collection for a loan outside your branch.' });
+      }
+    }
 
     if (!loanId || !amount) {
       return res.status(400).json({ error: 'Loan ID and Amount are required' });
