@@ -164,3 +164,14 @@ export const getLoanById = async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Failed to fetch loan details' });
   }
 };
+
+export const deleteLoan = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    await prisma.loan.delete({ where: { id: String(id) } });
+    res.json({ message: 'Loan deleted successfully' });
+  } catch (error) {
+    console.error('Delete Loan Error:', error);
+    res.status(500).json({ error: 'Failed to delete loan' });
+  }
+};

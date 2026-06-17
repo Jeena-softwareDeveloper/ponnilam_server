@@ -94,6 +94,7 @@ model Center {
   employee   Staff?  @relation(fields: [employeeId], references: [id])
 
   groups Group[]
+  customers Customer[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -241,6 +242,9 @@ model Customer {
 
   employeeId String?
   employee   Staff?  @relation(fields: [employeeId], references: [id])
+
+  centerId String?
+  center   Center? @relation(fields: [centerId], references: [id])
 
   groupId String?
   group   Group?  @relation(fields: [groupId], references: [id])

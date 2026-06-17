@@ -28,6 +28,20 @@ export const createCustomer = async (req: Request, res: Response) => {
       others
     } = req.body;
 
+    if (kyc?.idProof1No) {
+      const existing1 = await prisma.customerKyc.findFirst({
+        where: { OR: [{ idProof1No: kyc.idProof1No }, { idProof2No: kyc.idProof1No }] }
+      });
+      if (existing1) return res.status(400).json({ error: `Customer with ID Proof Number ${kyc.idProof1No} already exists.` });
+    }
+
+    if (kyc?.idProof2No) {
+      const existing2 = await prisma.customerKyc.findFirst({
+        where: { OR: [{ idProof1No: kyc.idProof2No }, { idProof2No: kyc.idProof2No }] }
+      });
+      if (existing2) return res.status(400).json({ error: `Customer with ID Proof Number ${kyc.idProof2No} already exists.` });
+    }
+
     const customerNo = await generateCustomerNo();
 
     const customer = await prisma.customer.create({
@@ -44,6 +58,7 @@ export const createCustomer = async (req: Request, res: Response) => {
         phone: general.phone,
         mobile: general.mobile,
         areaId: general.areaId || null,
+        centerId: general.centerId || null,
         groupId: general.groupId || null,
         employeeId: general.employeeId || null,
 
@@ -109,94 +124,127 @@ export const updateCustomer = async (req: Request, res: Response) => {
     const { id } = req.params;
     const { general, coApplicant, kyc, bank, others } = req.body;
 
+    if (kyc?.idProof1No) {
+      const existing1 = await prisma.customerKyc.findFirst({
+        where: { 
+          customerId: { not: String(id) },
+          OR: [{ idProof1No: kyc.idProof1No }, { idProof2No: kyc.idProof1No }] 
+        }
+      });
+      if (existing1) return res.status(400).json({ error: `Customer with ID Proof Number ${kyc.idProof1No} already exists.` });
+    }
+
+    if (kyc?.idProof2No) {
+      const existing2 = await prisma.customerKyc.findFirst({
+        where: { 
+          customerId: { not: String(id) },
+          OR: [{ idProof1No: kyc.idProof2No }, { idProof2No: kyc.idProof2No }] 
+        }
+      });
+      if (existing2) return res.status(400).json({ error: `Customer with ID Proof Number ${kyc.idProof2No} already exists.` });
+    }
+
+    const updateData: any = {};
+    
+    if (general) {
+      if (general.name !== undefined) updateData.name = general.name;
+      if (general.dob !== undefined) updateData.dob = general.dob ? new Date(general.dob) : null;
+      if (general.placeOfBirth !== undefined) updateData.placeOfBirth = general.placeOfBirth;
+      if (general.maritalStatus !== undefined) updateData.maritalStatus = general.maritalStatus;
+      if (general.address !== undefined) updateData.address = general.address;
+      if (general.residenceType !== undefined) updateData.residenceType = general.residenceType;
+      if (general.yearsInResidence !== undefined) updateData.yearsInResidence = general.yearsInResidence ? Number(general.yearsInResidence) : null;
+      if (general.occupation !== undefined) updateData.occupation = general.occupation;
+      if (general.phone !== undefined) updateData.phone = general.phone;
+      if (general.mobile !== undefined) updateData.mobile = general.mobile;
+      if (general.areaId !== undefined) updateData.areaId = general.areaId || null;
+      if (general.centerId !== undefined) updateData.centerId = general.centerId || null;
+      if (general.groupId !== undefined) updateData.groupId = general.groupId || null;
+      if (general.employeeId !== undefined) updateData.employeeId = general.employeeId || null;
+    }
+
+    if (others) {
+      if (others.familyMembers !== undefined) updateData.familyMembers = others.familyMembers ? Number(others.familyMembers) : 0;
+      if (others.fatherName !== undefined) updateData.fatherName = others.fatherName;
+      if (others.motherName !== undefined) updateData.motherName = others.motherName;
+      if (others.fatherDob !== undefined) updateData.fatherDob = others.fatherDob ? new Date(others.fatherDob) : null;
+      if (others.motherDob !== undefined) updateData.motherDob = others.motherDob ? new Date(others.motherDob) : null;
+    }
+
+    if (coApplicant && Object.keys(coApplicant).length > 0) {
+      updateData.coApplicant = {
+        upsert: {
+          create: {
+            name: coApplicant.name,
+            dob: coApplicant.dob ? new Date(coApplicant.dob) : null,
+            relationship: coApplicant.relationship,
+            occupation: coApplicant.occupation
+          },
+          update: {
+            name: coApplicant.name,
+            dob: coApplicant.dob ? new Date(coApplicant.dob) : null,
+            relationship: coApplicant.relationship,
+            occupation: coApplicant.occupation
+          }
+        }
+      };
+    }
+
+    if (kyc && Object.keys(kyc).length > 0) {
+      updateData.kyc = {
+        upsert: {
+          create: {
+            idProof1Type: kyc.idProof1Type,
+            idProof1No: kyc.idProof1No,
+            idProof1Name: kyc.idProof1Name,
+            idProof1Dob: kyc.idProof1Dob ? new Date(kyc.idProof1Dob) : null,
+            idProof1IssueDate: kyc.idProof1IssueDate ? new Date(kyc.idProof1IssueDate) : null,
+            idProof2Type: kyc.idProof2Type,
+            idProof2No: kyc.idProof2No,
+            idProof2Name: kyc.idProof2Name,
+            idProof2Dob: kyc.idProof2Dob ? new Date(kyc.idProof2Dob) : null,
+            idProof2IssueDate: kyc.idProof2IssueDate ? new Date(kyc.idProof2IssueDate) : null,
+          },
+          update: {
+            idProof1Type: kyc.idProof1Type,
+            idProof1No: kyc.idProof1No,
+            idProof1Name: kyc.idProof1Name,
+            idProof1Dob: kyc.idProof1Dob ? new Date(kyc.idProof1Dob) : null,
+            idProof1IssueDate: kyc.idProof1IssueDate ? new Date(kyc.idProof1IssueDate) : null,
+            idProof2Type: kyc.idProof2Type,
+            idProof2No: kyc.idProof2No,
+            idProof2Name: kyc.idProof2Name,
+            idProof2Dob: kyc.idProof2Dob ? new Date(kyc.idProof2Dob) : null,
+            idProof2IssueDate: kyc.idProof2IssueDate ? new Date(kyc.idProof2IssueDate) : null,
+          }
+        }
+      };
+    }
+
+    if (bank && Object.keys(bank).length > 0) {
+      updateData.bank = {
+        upsert: {
+          create: {
+            accountHolder: bank.accountHolder,
+            accountNumber: bank.accountNumber,
+            ifsc: bank.ifsc,
+            bankName: bank.bankName,
+            branchName: bank.branchName
+          },
+          update: {
+            accountHolder: bank.accountHolder,
+            accountNumber: bank.accountNumber,
+            ifsc: bank.ifsc,
+            bankName: bank.bankName,
+            branchName: bank.branchName
+          }
+        }
+      };
+    }
+
     const customer = await prisma.customer.update({
       where: { id: String(id) },
-      data: {
-        name: general.name,
-        dob: general.dob ? new Date(general.dob) : null,
-        placeOfBirth: general.placeOfBirth,
-        maritalStatus: general.maritalStatus,
-        address: general.address,
-        residenceType: general.residenceType,
-        yearsInResidence: general.yearsInResidence ? Number(general.yearsInResidence) : null,
-        occupation: general.occupation,
-        phone: general.phone,
-        mobile: general.mobile,
-        areaId: general.areaId || null,
-        groupId: general.groupId || null,
-        employeeId: general.employeeId || null,
-
-        familyMembers: others?.familyMembers ? Number(others.familyMembers) : 0,
-        fatherName: others?.fatherName,
-        motherName: others?.motherName,
-        fatherDob: others?.fatherDob ? new Date(others.fatherDob) : null,
-        motherDob: others?.motherDob ? new Date(others.motherDob) : null,
-
-        coApplicant: coApplicant ? {
-          upsert: {
-            create: {
-              name: coApplicant.name,
-              dob: coApplicant.dob ? new Date(coApplicant.dob) : null,
-              relationship: coApplicant.relationship,
-              occupation: coApplicant.occupation
-            },
-            update: {
-              name: coApplicant.name,
-              dob: coApplicant.dob ? new Date(coApplicant.dob) : null,
-              relationship: coApplicant.relationship,
-              occupation: coApplicant.occupation
-            }
-          }
-        } : undefined,
-
-        kyc: kyc ? {
-          upsert: {
-              create: {
-                idProof1Type: kyc.idProof1Type,
-                idProof1No: kyc.idProof1No,
-                idProof1Name: kyc.idProof1Name,
-                idProof1Dob: kyc.idProof1Dob ? new Date(kyc.idProof1Dob) : null,
-                idProof1IssueDate: kyc.idProof1IssueDate ? new Date(kyc.idProof1IssueDate) : null,
-                idProof2Type: kyc.idProof2Type,
-                idProof2No: kyc.idProof2No,
-                idProof2Name: kyc.idProof2Name,
-                idProof2Dob: kyc.idProof2Dob ? new Date(kyc.idProof2Dob) : null,
-                idProof2IssueDate: kyc.idProof2IssueDate ? new Date(kyc.idProof2IssueDate) : null,
-              },
-              update: {
-                ...(kyc.idProof1Type !== undefined && { idProof1Type: kyc.idProof1Type }),
-                ...(kyc.idProof1No !== undefined && { idProof1No: kyc.idProof1No }),
-                ...(kyc.idProof1Name !== undefined && { idProof1Name: kyc.idProof1Name }),
-                ...(kyc.idProof1Dob !== undefined && { idProof1Dob: kyc.idProof1Dob ? new Date(kyc.idProof1Dob) : null }),
-                ...(kyc.idProof1IssueDate !== undefined && { idProof1IssueDate: kyc.idProof1IssueDate ? new Date(kyc.idProof1IssueDate) : null }),
-                ...(kyc.idProof2Type !== undefined && { idProof2Type: kyc.idProof2Type }),
-                ...(kyc.idProof2No !== undefined && { idProof2No: kyc.idProof2No }),
-                ...(kyc.idProof2Name !== undefined && { idProof2Name: kyc.idProof2Name }),
-                ...(kyc.idProof2Dob !== undefined && { idProof2Dob: kyc.idProof2Dob ? new Date(kyc.idProof2Dob) : null }),
-                ...(kyc.idProof2IssueDate !== undefined && { idProof2IssueDate: kyc.idProof2IssueDate ? new Date(kyc.idProof2IssueDate) : null }),
-              }
-          }
-        } : undefined,
-
-        bank: bank ? {
-          upsert: {
-            create: {
-              accountHolder: bank.accountHolder,
-              accountNumber: bank.accountNumber,
-              ifsc: bank.ifsc,
-              bankName: bank.bankName,
-              branchName: bank.branchName
-            },
-            update: {
-              accountHolder: bank.accountHolder,
-              accountNumber: bank.accountNumber,
-              ifsc: bank.ifsc,
-              bankName: bank.bankName,
-              branchName: bank.branchName
-            }
-          }
-        } : undefined
-      },
+      data: updateData,
       include: {
         area: true,
         group: true,
@@ -236,7 +284,7 @@ export const getCustomers = async (req: Request, res: Response) => {
     }
 
     if (centerId) {
-      where.group = { centerId: String(centerId) };
+      where.centerId = String(centerId);
     }
 
     const customers = await prisma.customer.findMany({
@@ -322,5 +370,33 @@ export const getCustomerLedger = async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Get Customer Ledger Error:', error);
     res.status(500).json({ error: 'Failed to get customer ledger' });
+  }
+};
+
+export const deleteCustomer = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    await prisma.customer.delete({ where: { id: String(id) } });
+    res.json({ message: 'Customer deleted successfully' });
+  } catch (error) {
+    console.error('Delete Customer Error:', error);
+    res.status(500).json({ error: 'Failed to delete customer' });
+  }
+};
+
+export const toggleCustomerStatus = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const customer = await prisma.customer.findUnique({ where: { id: String(id) } });
+    if (!customer) return res.status(404).json({ error: 'Customer not found' });
+
+    const updated = await prisma.customer.update({
+      where: { id: String(id) },
+      data: { isActive: !customer.isActive }
+    });
+    res.json({ message: `Customer ${updated.isActive ? 'activated' : 'deactivated'} successfully`, isActive: updated.isActive });
+  } catch (error) {
+    console.error('Toggle Customer Status Error:', error);
+    res.status(500).json({ error: 'Failed to update customer status' });
   }
 };
