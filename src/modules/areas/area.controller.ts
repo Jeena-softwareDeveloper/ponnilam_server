@@ -61,6 +61,7 @@ export const deleteArea = async (req: Request, res: Response): Promise<any> => {
     await prisma.area.delete({ where: { id } });
     return res.status(204).send();
   } catch (error: any) {
+    if (error.code === 'P2003') return res.status(400).json({ error: 'Cannot delete area because it has associated centers, staffs, or customers' });
     console.error('Error deleting area:', error);
     return res.status(500).json({ error: 'Internal server error' });
   }

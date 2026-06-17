@@ -32,7 +32,7 @@ export const login = async (req: Request, res: Response): Promise<any> => {
           { username: username }
         ]
       },
-      include: { role: true, area: { include: { branch: true } } }
+      include: { role: true, branch: true, area: { include: { branch: true } } }
     });
 
     if (!staff) {
@@ -91,7 +91,7 @@ export const login = async (req: Request, res: Response): Promise<any> => {
         name: staff.name,
         role: staff.role?.name || 'User',
         area: staff.area?.name || null,
-        branch: staff.area?.branch?.name || null
+        branch: staff.branch?.name || staff.area?.branch?.name || null
       }
     });
 

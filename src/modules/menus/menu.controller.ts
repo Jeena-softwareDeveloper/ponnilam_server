@@ -64,6 +64,7 @@ export const deleteMenu = async (req: Request, res: Response): Promise<any> => {
     return res.status(200).json({ message: 'Menu deleted successfully' });
   } catch (error: any) {
     if (error.code === 'P2025') return res.status(404).json({ error: 'Menu not found' });
+    if (error.code === 'P2003') return res.status(400).json({ error: 'Cannot delete menu because it has associated permissions or children' });
     console.error('Error deleting menu:', error);
     return res.status(500).json({ error: 'Internal server error' });
   }

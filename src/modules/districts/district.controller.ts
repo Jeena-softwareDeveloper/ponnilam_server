@@ -61,6 +61,7 @@ export const deleteDistrict = async (req: Request, res: Response): Promise<any> 
     await prisma.district.delete({ where: { id } });
     return res.status(200).json({ message: 'District deleted successfully' });
   } catch (error: any) {
+    if (error.code === 'P2003') return res.status(400).json({ error: 'Cannot delete district because it has associated branches' });
     console.error('Error deleting district:', error);
     return res.status(500).json({ error: 'Internal server error' });
   }

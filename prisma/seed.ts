@@ -102,8 +102,14 @@ async function main() {
 
   await prisma.menu.upsert({
     where: { name: 'Centers' },
-    update: { parentId: mastersMenu.id },
-    create: { name: 'Centers', path: '/admin/masters/centers', icon: 'MapPin', parentId: mastersMenu.id },
+    update: { parentId: null },
+    create: { name: 'Centers', path: '/admin/masters/centers', icon: 'MapPin' },
+  });
+
+  await prisma.menu.upsert({
+    where: { name: 'Groups' },
+    update: { parentId: null },
+    create: { name: 'Groups', path: '/admin/masters/groups', icon: 'Users' },
   });
 
   await prisma.menu.upsert({

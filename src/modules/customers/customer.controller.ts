@@ -43,6 +43,7 @@ export const createCustomer = async (req: Request, res: Response) => {
         phone: general.phone,
         mobile: general.mobile,
         areaId: general.areaId || null,
+        groupId: general.groupId || null,
         employeeId: general.employeeId || null,
 
         familyMembers: others?.familyMembers ? Number(others.familyMembers) : 0,
@@ -82,6 +83,7 @@ export const createCustomer = async (req: Request, res: Response) => {
       },
       include: {
         area: true,
+        group: true,
         employee: true,
         coApplicant: true,
         kyc: true,
@@ -114,6 +116,7 @@ export const updateCustomer = async (req: Request, res: Response) => {
         phone: general.phone,
         mobile: general.mobile,
         areaId: general.areaId || null,
+        groupId: general.groupId || null,
         employeeId: general.employeeId || null,
 
         familyMembers: others?.familyMembers ? Number(others.familyMembers) : 0,
@@ -179,6 +182,7 @@ export const updateCustomer = async (req: Request, res: Response) => {
       },
       include: {
         area: true,
+        group: true,
         employee: true,
         coApplicant: true,
         kyc: true,
@@ -218,6 +222,7 @@ export const getCustomers = async (req: Request, res: Response) => {
       where,
       include: {
         area: true,
+        group: true,
         employee: true
       },
       orderBy: { createdAt: 'desc' }
@@ -244,6 +249,7 @@ export const getCustomerById = async (req: Request, res: Response) => {
       where,
       include: {
         area: true,
+        group: true,
         employee: true,
         coApplicant: true,
         kyc: true,

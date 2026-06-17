@@ -11,6 +11,7 @@ import staffRoutes from './modules/staffs/staff.routes';
 import menuRoutes from './modules/menus/menu.routes';
 import loanPackageRoutes from './modules/loanPackages/loanPackage.routes';
 import areaRoutes from './modules/areas/area.routes';
+import groupRoutes from './modules/groups/group.routes';
 import stateRoutes from './modules/states/state.routes';
 import districtRoutes from './modules/districts/district.routes';
 import customerRoutes from './modules/customers/customer.routes';
@@ -42,6 +43,7 @@ app.use('/api/v1/masters', branchScope);
 
 // Apply specific routes and audit logs
 app.use('/api/v1/masters/centers', auditMiddleware('Center'), centerRoutes);
+app.use('/api/v1/masters/groups', auditMiddleware('Group'), groupRoutes);
 app.use('/api/v1/masters/areas', auditMiddleware('Area'), areaRoutes);
 app.use('/api/v1/masters/branches', auditMiddleware('Branch'), branchRoutes);
 app.use('/api/v1/masters/states', auditMiddleware('State'), stateRoutes);
