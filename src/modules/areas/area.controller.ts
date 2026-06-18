@@ -84,7 +84,10 @@ export const deleteArea = async (req: Request, res: Response): Promise<any> => {
     await prisma.area.delete({ where: { id } });
     return res.status(204).send();
   } catch (error: any) {
-    if (error.code === 'P2003') return res.status(400).json({ error: 'Cannot delete area because it has associated centers, staffs, or customers' });
+    if (error.code === 'P2025') return res.status(404).json({ error: 'Area not found' });
+    if (error.code === 'P2003' || error.code === 'P2014' || (error.message && error.message.includes('foreign key constraint'))) {
+      return res.status(400).json({ error: 'Cannot delete area because it has associated centers or customers' });
+    }
     console.error('Error deleting area:', error);
     return res.status(500).json({ error: 'Internal server error' });
   }

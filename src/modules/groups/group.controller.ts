@@ -81,8 +81,10 @@ export const deleteGroup = async (req: Request, res: Response): Promise<any> => 
     await prisma.group.delete({ where: { id } });
     return res.status(200).json({ message: 'Group deleted successfully' });
   } catch (error: any) {
-    if (error.code === 'P2003') return res.status(400).json({ error: 'Cannot delete group because it has associated customers' });
     if (error.code === 'P2025') return res.status(404).json({ error: 'Group not found' });
+    if (error.code === 'P2003' || error.code === 'P2014' || (error.message && error.message.includes('foreign key constraint'))) {
+      return res.status(400).json({ error: 'Cannot delete group because it has associated customers' });
+    }
     console.error('Error deleting group:', error);
     return res.status(500).json({ error: 'Internal server error' });
   }
