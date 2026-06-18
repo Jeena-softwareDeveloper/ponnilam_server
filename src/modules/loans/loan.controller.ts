@@ -186,6 +186,7 @@ export const getLoanById = async (req: Request, res: Response) => {
     if (!loan) return res.status(404).json({ error: 'Loan not found' });
     res.json(loan);
   } catch (error) {
+    console.error('getLoanById Error:', error);
     res.status(500).json({ error: 'Failed to fetch loan details' });
   }
 };

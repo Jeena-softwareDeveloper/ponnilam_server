@@ -349,7 +349,8 @@ export const getCustomers = async (req: Request, res: Response) => {
       include: {
         area: true,
         group: true,
-        employee: true
+        employee: true,
+        center: true
       },
       orderBy: { createdAt: 'desc' }
     });
