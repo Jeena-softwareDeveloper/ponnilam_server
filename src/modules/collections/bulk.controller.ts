@@ -109,14 +109,10 @@ export const processBulkCollection = async (req: Request, res: Response): Promis
 
         // 4. Update the Loan's outstanding and advance balances
         let newOutstanding = loan.outstandingAmount - entryAmount;
-        let advanceAdded = 0;
 
         if (newOutstanding < 0) {
-          advanceAdded = Math.abs(newOutstanding);
           newOutstanding = 0;
         }
-
-        const newAdvanceBalance = loan.advanceBalance + advanceAdded;
         let newStatus = loan.status;
         
         if (newOutstanding <= 0) {
@@ -129,40 +125,11 @@ export const processBulkCollection = async (req: Request, res: Response): Promis
           where: { id: loan.id },
           data: { 
             outstandingAmount: newOutstanding, 
-            advanceBalance: newAdvanceBalance,
             status: newStatus 
           }
         });
 
-        // 5. Create Customer Ledger Entry
-        // Since we don't have a definitive "Customer Total Balance" across all loans yet,
-        // we'll use the specific loan's outstanding amount as the ledger balance basis for this feature.
-        await tx.customerLedger.create({
-          data: {
-            date: new Date(trnDate),
-            transactionType: 'Collection',
-            amount: entryAmount,
-            openingBalance: loan.outstandingAmount,
-            closingBalance: newOutstanding,
-            remarks: `Bulk collection for ${loan.loanNumber}`,
-            customerId: loan.customerId,
-            collectionId: collection.id
-          }
-        });
-
-        // 6. Create Loan Ledger Entry
-        await tx.loanLedger.create({
-          data: {
-            date: new Date(trnDate),
-            transactionType: 'EMI Collection',
-            amount: entryAmount,
-            openingBalance: loan.outstandingAmount,
-            closingBalance: newOutstanding,
-            remarks: remarks || `Collected via Bulk Entry`,
-            loanId: loan.id,
-            collectionId: collection.id
-          }
-        });
+        // Ledgers removed due to schema changes
 
         processedCollections.push(collection);
       }
