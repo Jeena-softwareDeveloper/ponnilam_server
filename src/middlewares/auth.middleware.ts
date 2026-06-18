@@ -46,7 +46,8 @@ export const authenticateToken = async (req: AuthRequest, res: Response, next: N
 
     req.user = {
       ...staff,
-      branchId: staff.branchId || staff.area?.branchId || null
+      // Strictly enforce branchId from the token if present, fallback to live DB value
+      branchId: decoded.branchId || staff.branchId || staff.area?.branchId || null
     };
     next();
   } catch (error) {

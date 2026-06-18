@@ -22,11 +22,17 @@ const generateCenterCode = async (name: string) => {
 export const getCenters = async (req: Request, res: Response): Promise<any> => {
   try {
     const { branchId, staffId } = req.query;
+    const user = (req as any).user;
+    const userBranchId = user?.branchId;
+    
     const whereClause: any = {};
     
-    if (branchId) {
+    if (userBranchId) {
+      whereClause.area = { branchId: userBranchId };
+    } else if (branchId && branchId !== 'all') {
       whereClause.area = { branchId: String(branchId) };
     }
+
     if (staffId) {
       whereClause.employeeId = String(staffId);
     }

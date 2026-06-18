@@ -8,14 +8,19 @@ export const getStaffs = async (req: Request, res: Response): Promise<any> => {
   try {
     const { areaId, branchId } = req.query;
     
+    const user = (req as any).user;
+    const userBranchId = user?.branchId;
+    
     let whereClause: any = {};
+    const activeBranchId = userBranchId || branchId;
+
     if (areaId) {
       whereClause.areaId = String(areaId);
     }
-    if (branchId) {
+    if (activeBranchId) {
       whereClause.OR = [
-        { branchId: String(branchId) },
-        { area: { branchId: String(branchId) } }
+        { branchId: String(activeBranchId) },
+        { area: { branchId: String(activeBranchId) } }
       ];
     }
 

@@ -332,11 +332,16 @@ export const getCustomers = async (req: Request, res: Response) => {
       ];
     }
     
+    const user = (req as any).user;
+    const userBranchId = user?.branchId;
+
     if (res.locals.areaIds && res.locals.areaIds.length > 0) {
       where.areaId = { in: res.locals.areaIds };
+    } else if (userBranchId) {
+      where.area = { branchId: userBranchId, ...(areaId ? { id: String(areaId) } : {}) };
     } else if (areaId) {
       where.areaId = String(areaId);
-    } else if (branchId) {
+    } else if (branchId && branchId !== 'all') {
       where.area = { branchId: String(branchId) };
     }
 

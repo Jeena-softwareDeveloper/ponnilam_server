@@ -10,7 +10,7 @@ export const getGroups = async (req: Request, res: Response): Promise<any> => {
     
     if (centerId) {
       whereClause.centerId = String(centerId);
-    } else if (branchId) {
+    } else if (branchId && branchId !== 'all') {
       whereClause.center = { area: { branchId: String(branchId) } };
     }
     

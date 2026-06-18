@@ -6,8 +6,11 @@ const prisma = new PrismaClient();
 export const getAreas = async (req: Request, res: Response): Promise<any> => {
   try {
     const { branchId } = req.query;
+    const user = (req as any).user;
+    const activeBranchId = user?.branchId || branchId;
+
     const areas = await prisma.area.findMany({
-      where: branchId ? { branchId: String(branchId) } : undefined,
+      where: activeBranchId ? { branchId: String(activeBranchId) } : undefined,
       include: { branch: true },
       orderBy: { name: 'asc' },
     });

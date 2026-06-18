@@ -42,7 +42,15 @@ export const createCollection = async (req: Request, res: Response): Promise<any
       // 1. Get current loan
       const loan = await tx.loan.findUnique({
         where: { id: String(loanId) },
-        include: { schedules: { where: { status: { in: ['PENDING', 'PARTIAL'] } }, orderBy: { dueDate: 'asc' } } }
+        include: { schedules: { 
+          where: { status: { in: ['PENDING', 'PARTIAL'] } }, 
+          orderBy: { dueDate: 'asc' },
+          select: {
+            id: true, emiAmount: true, amountPaid: true, status: true,
+            dueDate: true, paidDate: true, collectionId: true, loanId: true,
+            createdAt: true, updatedAt: true
+          }
+        } }
       });
 
       if (!loan) throw new Error('Loan not found');
@@ -128,11 +136,14 @@ export const getCollections = async (req: Request, res: Response) => {
     if (loanId) where.loanId = String(loanId);
     if (staffId) where.staffId = String(staffId);
 
-    // Branch-scoped staff: filter by their area IDs
+    const user = (req as any).user;
+    const userBranchId = user?.branchId;
+
     if (res.locals.areaIds && res.locals.areaIds.length > 0) {
       where.loan = { customer: { areaId: { in: res.locals.areaIds } } };
+    } else if (userBranchId) {
+      where.loan = { customer: { area: { branchId: userBranchId } } };
     } else if (branchId && branchId !== 'all') {
-      // Super Admin selected a specific branch from the dropdown
       where.loan = { customer: { area: { branchId: String(branchId) } } };
     }
 

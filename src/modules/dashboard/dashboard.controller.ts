@@ -6,9 +6,10 @@ const prisma = new PrismaClient();
 // ─── Shared helpers ─────────────────────────────────────────────────────────
 
 function buildWhere(areaId?: string, branchId?: string) {
-  const whereCustomer: any = areaId ? { areaId } : branchId ? { area: { branchId } } : {};
-  const whereLoan: any = areaId ? { customer: { areaId } } : branchId ? { customer: { area: { branchId } } } : {};
-  const whereCollection: any = areaId ? { loan: { customer: { areaId } } } : branchId ? { loan: { customer: { area: { branchId } } } } : {};
+  const validBranchId = branchId && branchId !== 'all' ? branchId : undefined;
+  const whereCustomer: any = areaId ? { areaId } : validBranchId ? { area: { branchId: validBranchId } } : {};
+  const whereLoan: any = areaId ? { customer: { areaId } } : validBranchId ? { customer: { area: { branchId: validBranchId } } } : {};
+  const whereCollection: any = areaId ? { loan: { customer: { areaId } } } : validBranchId ? { loan: { customer: { area: { branchId: validBranchId } } } } : {};
   return { whereCustomer, whereLoan, whereCollection };
 }
 
@@ -32,7 +33,9 @@ function calcTrend(current: number, previous: number) {
 export const getDashboardKpis = async (req: Request, res: Response) => {
   try {
     const { areaId, branchId } = req.query as Record<string, string>;
-    const { whereCustomer, whereLoan, whereCollection } = buildWhere(areaId, branchId);
+    const user = (req as any).user;
+    const activeBranchId = user?.branchId || branchId;
+    const { whereCustomer, whereLoan, whereCollection } = buildWhere(areaId, activeBranchId);
     const { todayStart, todayEnd, yesterdayStart, lastMonthEnd } = dateBoundaries();
 
     const [
@@ -80,7 +83,9 @@ export const getDashboardKpis = async (req: Request, res: Response) => {
 export const getDashboardTrend = async (req: Request, res: Response) => {
   try {
     const { areaId, branchId } = req.query as Record<string, string>;
-    const { whereCollection } = buildWhere(areaId, branchId);
+    const user = (req as any).user;
+    const activeBranchId = user?.branchId || branchId;
+    const { whereCollection } = buildWhere(areaId, activeBranchId);
     const { now, thisMonthStart } = dateBoundaries();
 
     const rows = await prisma.collection.findMany({
@@ -111,7 +116,9 @@ export const getDashboardTrend = async (req: Request, res: Response) => {
 export const getDashboardCharts = async (req: Request, res: Response) => {
   try {
     const { areaId, branchId } = req.query as Record<string, string>;
-    const { whereLoan, whereCollection } = buildWhere(areaId, branchId);
+    const user = (req as any).user;
+    const activeBranchId = user?.branchId || branchId;
+    const { whereLoan, whereCollection } = buildWhere(areaId, activeBranchId);
     const { todayStart, thisMonthStart } = dateBoundaries();
 
     const [activeLoans, closedLoans, overdueGroups, branches] = await Promise.all([
@@ -123,7 +130,7 @@ export const getDashboardCharts = async (req: Request, res: Response) => {
         _count: { loanId: true }
       }),
       prisma.branch.findMany({
-        where: branchId ? { id: branchId } : {},
+        where: activeBranchId ? { id: activeBranchId } : {},
         select: { id: true, name: true }
       })
     ]);
@@ -166,7 +173,9 @@ export const getDashboardCharts = async (req: Request, res: Response) => {
 export const getDashboardActivity = async (req: Request, res: Response) => {
   try {
     const { areaId, branchId } = req.query as Record<string, string>;
-    const { whereLoan } = buildWhere(areaId, branchId);
+    const user = (req as any).user;
+    const activeBranchId = user?.branchId || branchId;
+    const { whereLoan } = buildWhere(areaId, activeBranchId);
     const { now, todayStart } = dateBoundaries();
 
     const [recentLoans, overdueSchedules] = await Promise.all([

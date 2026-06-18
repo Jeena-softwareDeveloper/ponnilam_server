@@ -58,9 +58,12 @@ export const login = async (req: Request, res: Response): Promise<any> => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Generate JWT
+    // Generate JWT with strict branch assignment
     const token = jwt.sign(
-      { id: staff.id },
+      { 
+        id: staff.id,
+        branchId: staff.branchId || staff.area?.branchId || null
+      },
       process.env.JWT_SECRET || 'fallback_secret',
       { expiresIn: '1d' }
     );
@@ -107,11 +110,13 @@ export const getAuthMenus = async (req: Request, res: Response): Promise<any> =>
     const user = (req as any).user;
     if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
+    const operationalMenus = ['Centers', 'Customers', 'Collections', 'Reports', 'Customer Ledger', 'Loans'];
+
     if (user.id === 'env-admin') {
       const allMenus = await prisma.menu.findMany({
         orderBy: { name: 'asc' }
       });
-      return res.status(200).json(allMenus);
+      return res.status(200).json(allMenus.filter(m => !operationalMenus.includes(m.name)));
     }
 
     const staff = await prisma.staff.findUnique({
@@ -130,7 +135,7 @@ export const getAuthMenus = async (req: Request, res: Response): Promise<any> =>
       const allMenus = await prisma.menu.findMany({
         orderBy: { name: 'asc' }
       });
-      return res.status(200).json(allMenus);
+      return res.status(200).json(allMenus.filter(m => !operationalMenus.includes(m.name)));
     }
 
     let allowedMenus: any[] = [];
