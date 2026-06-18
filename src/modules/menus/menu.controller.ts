@@ -123,6 +123,13 @@ export const assignBranchMenus = async (req: Request, res: Response): Promise<an
       const data = menuIds.map((menuId: string) => ({ branchId, menuId }));
       await prisma.branchMenu.createMany({ data });
     }
+
+    const staffsInBranch = await prisma.staff.findMany({ where: { branchId }, select: { id: true } });
+    const staffIds = staffsInBranch.map(s => s.id);
+    if (staffIds.length > 0) {
+      await prisma.staffMenu.deleteMany({ where: { staffId: { in: staffIds } } });
+    }
+
     return res.status(200).json({ message: 'Branch permissions updated successfully' });
   } catch (error) {
     console.error('Error assigning branch menus:', error);
