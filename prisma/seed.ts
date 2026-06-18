@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { PrismaClient } from '@prisma/client';
+import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
 
@@ -219,9 +220,10 @@ async function main() {
     update: {},
     create: {
       name: 'Admin System',
+      username: 'admin',
       email: 'admin@financeos.com',
       phone: '9000000000',
-      password: 'password123', // should be hashed in real app
+      password: await bcrypt.hash('password123', 10),
       isActive: true,
       branchId: branch1.id,
       roleId: superAdminRole.id,
