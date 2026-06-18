@@ -111,7 +111,7 @@ export const createLoan = async (req: Request, res: Response) => {
 export const updateLoanStatus = async (req: Request, res: Response): Promise<any> => {
   try {
     const { id } = req.params;
-    const { status } = req.body;
+    const { status, remarks } = req.body;
 
     const existingLoan = await prisma.loan.findUnique({ 
       where: { id: id as string }, 
@@ -128,7 +128,7 @@ export const updateLoanStatus = async (req: Request, res: Response): Promise<any
 
     const loan = await prisma.loan.update({
       where: { id: String(id) },
-      data: { status }
+      data: { status, ...(remarks !== undefined && { remarks }) }
     });
 
     res.json(loan);
@@ -155,7 +155,7 @@ export const getLoans = async (req: Request, res: Response) => {
     const loans = await prisma.loan.findMany({
       where,
       include: {
-        customer: { include: { area: { include: { branch: true } } } },
+        customer: { include: { area: { include: { branch: true } }, center: true } },
         staff: true,
       },
       orderBy: { createdAt: 'desc' }
@@ -172,7 +172,7 @@ export const getLoanById = async (req: Request, res: Response) => {
     const loan = await prisma.loan.findUnique({
       where: { id: String(id) },
       include: {
-        customer: true,
+        customer: { include: { center: true } },
         staff: true,
         schedules: {
           orderBy: { dueDate: 'asc' }

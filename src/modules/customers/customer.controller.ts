@@ -3,19 +3,26 @@ import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
-// Generate Customer Number (e.g., CUST0001)
-const generateCustomerNo = async () => {
-  const lastCustomer = await prisma.customer.findFirst({
-    orderBy: { createdAt: 'desc' },
-  });
-
-  if (!lastCustomer || !lastCustomer.customerNo) {
-    return 'CUST0001';
+// Generate Customer Number with branch prefix (e.g., PON001 for branch "Ponnilam")
+const generateCustomerNo = async (branchId?: string) => {
+  let prefix = 'CUS'; // fallback prefix
+  if (branchId) {
+    const branch = await prisma.branch.findUnique({ where: { id: branchId } });
+    if (branch?.name) {
+      prefix = branch.name.trim().replace(/[^a-zA-Z]/g, '').substring(0, 3).toUpperCase();
+    }
   }
-
-  const lastNo = parseInt(lastCustomer.customerNo.replace('CUST', ''), 10);
-  const nextNo = (lastNo + 1).toString().padStart(4, '0');
-  return `CUST${nextNo}`;
+  // Find last customer with this prefix to get next sequential number
+  const existing = await prisma.customer.findMany({
+    where: { customerNo: { startsWith: prefix } },
+    orderBy: { customerNo: 'desc' },
+  });
+  let nextNo = 1;
+  if (existing.length > 0 && existing[0].customerNo) {
+    const lastNum = parseInt(existing[0].customerNo.replace(prefix, ''), 10);
+    if (!isNaN(lastNum)) nextNo = lastNum + 1;
+  }
+  return `${prefix}${nextNo.toString().padStart(3, '0')}`;
 };
 
 export const createCustomer = async (req: Request, res: Response) => {
@@ -52,7 +59,16 @@ export const createCustomer = async (req: Request, res: Response) => {
       }
     }
 
-    const customerNo = await generateCustomerNo();
+    // Get the branchId for this customer (from area or logged-in user)
+    let branchIdForNo: string | undefined;
+    if (general?.areaId) {
+      const area = await prisma.area.findUnique({ where: { id: general.areaId } });
+      branchIdForNo = area?.branchId || undefined;
+    } else if (user?.branchId) {
+      branchIdForNo = user.branchId;
+    }
+
+    const customerNo = await generateCustomerNo(branchIdForNo);
 
     const customer = await prisma.customer.create({
       data: {

@@ -42,7 +42,7 @@ export const createCollection = async (req: Request, res: Response): Promise<any
       // 1. Get current loan
       const loan = await tx.loan.findUnique({
         where: { id: String(loanId) },
-        include: { schedules: { where: { status: 'PENDING' }, orderBy: { dueDate: 'asc' } } }
+        include: { schedules: { where: { status: { in: ['PENDING', 'PARTIAL'] } }, orderBy: { dueDate: 'asc' } } }
       });
 
       if (!loan) throw new Error('Loan not found');
@@ -54,17 +54,29 @@ export const createCollection = async (req: Request, res: Response): Promise<any
       for (const schedule of loan.schedules) {
         if (remainingCollectionAmount <= 0) break;
 
-        if (remainingCollectionAmount >= schedule.emiAmount) {
+        const remainingEmiAmount = schedule.emiAmount - (schedule.amountPaid || 0);
+
+        if (remainingCollectionAmount >= remainingEmiAmount) {
           // Fully pay this EMI
-          remainingCollectionAmount -= schedule.emiAmount;
+          remainingCollectionAmount -= remainingEmiAmount;
           updatedSchedules.push(tx.loanSchedule.update({
             where: { id: schedule.id },
-            data: { status: 'PAID', paidDate: new Date(trnDate) }
+            data: { 
+              status: 'PAID', 
+              paidDate: new Date(trnDate),
+              amountPaid: schedule.emiAmount
+            }
           }));
         } else {
-          // Partially paying an EMI is not fully supported in simple model,
-          // but if they pay less, we leave the schedule PENDING, but we still deduct from outstanding
-          // For a strict system, they must pay exactly EMI multiples. We'll just deduct outstanding.
+          // Partially paying an EMI
+          updatedSchedules.push(tx.loanSchedule.update({
+            where: { id: schedule.id },
+            data: { 
+              status: 'PARTIAL', 
+              amountPaid: { increment: remainingCollectionAmount }
+            }
+          }));
+          remainingCollectionAmount = 0;
           break;
         }
       }

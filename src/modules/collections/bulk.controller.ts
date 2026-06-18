@@ -3,18 +3,18 @@ import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
-// Generate TRN Number
+// Generate TRN Number (e.g., TRN001)
 const generateTrnNo = async (tx: any) => {
   const lastTrn = await tx.collection.findFirst({
     orderBy: { createdAt: 'desc' },
   });
 
   if (!lastTrn || !lastTrn.trnNumber) {
-    return 'TRN0001';
+    return 'TRN001';
   }
 
   const lastNo = parseInt(lastTrn.trnNumber.replace('TRN', ''), 10);
-  const nextNo = (lastNo + 1).toString().padStart(4, '0');
+  const nextNo = (lastNo + 1).toString().padStart(3, '0');
   return `TRN${nextNo}`;
 };
 
@@ -66,7 +66,7 @@ export const processBulkCollection = async (req: Request, res: Response): Promis
         }
 
         currentTrnNo++;
-        const nextTrnStr = currentTrnNo.toString().padStart(4, '0');
+        const nextTrnStr = currentTrnNo.toString().padStart(3, '0');
         const trnNumber = `TRN${nextTrnStr}`;
 
         // 2. Clear EMIs with the collected amount

@@ -3,6 +3,22 @@ import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
+// Generate Center Code (e.g., SAT001 from "Sattur" center name)
+const generateCenterCode = async (name: string) => {
+  const prefix = name.trim().replace(/[^a-zA-Z]/g, '').substring(0, 3).toUpperCase();
+  // Count existing centers with the same prefix
+  const existing = await prisma.center.findMany({
+    where: { code: { startsWith: prefix } },
+    orderBy: { code: 'desc' },
+  });
+  let nextNo = 1;
+  if (existing.length > 0 && existing[0].code) {
+    const lastNum = parseInt(existing[0].code.replace(prefix, ''), 10);
+    if (!isNaN(lastNum)) nextNo = lastNum + 1;
+  }
+  return `${prefix}${nextNo.toString().padStart(3, '0')}`;
+};
+
 export const getCenters = async (req: Request, res: Response): Promise<any> => {
   try {
     const { branchId, staffId } = req.query;
@@ -17,19 +33,77 @@ export const getCenters = async (req: Request, res: Response): Promise<any> => {
     
     const centers = await prisma.center.findMany({
       where: whereClause,
-      include: { employee: true, area: true },
+      include: { 
+        employee: true, 
+        area: true,
+        customers: {
+          include: {
+            loans: {
+              select: { status: true }
+            }
+          }
+        }
+      },
       orderBy: { name: 'asc' },
     });
-    return res.status(200).json(centers);
+
+    const enrichedCenters = centers.map(center => {
+      let activeLoansCount = 0;
+      let pendingSetupCount = 0;
+
+      center.customers.forEach(customer => {
+        const hasActiveLoan = customer.loans.some(l => l.status === 'ACTIVE');
+        if (hasActiveLoan) {
+          activeLoansCount++;
+        } else {
+          // No active loan means they are pending setup
+          pendingSetupCount++;
+        }
+      });
+
+      // Remove the large customers array to keep the payload small
+      const { customers, ...rest } = center;
+      return {
+        ...rest,
+        activeLoansCount,
+        pendingSetupCount
+      };
+    });
+
+    return res.status(200).json(enrichedCenters);
   } catch (error) {
     console.error('Error fetching centers:', error);
     return res.status(500).json({ error: 'Internal server error' });
   }
 };
 
+export const getCenterById = async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { id } = req.params;
+    const center = await prisma.center.findUnique({
+      where: { id: String(id) },
+      include: { employee: true, area: true }
+    });
+    if (!center) return res.status(404).json({ error: 'Center not found' });
+
+    // Security check
+    const user = (req as any).user;
+    if (user?.role?.name !== 'Super Admin' && user?.branchId) {
+      if (center.area?.branchId !== user.branchId) {
+        return res.status(403).json({ error: 'Security Violation: Cannot view a center outside your branch.' });
+      }
+    }
+
+    return res.status(200).json(center);
+  } catch (error) {
+    console.error('Error fetching center by id:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
 export const createCenter = async (req: Request, res: Response): Promise<any> => {
   try {
-    const { name, code, centerTime, repaymentType, disbursMode, areaId, employeeId, totalMembers } = req.body;
+    const { name, centerTime, repaymentType, disbursMode, areaId, employeeId, totalMembers } = req.body;
     if (!name || !areaId) return res.status(400).json({ error: 'Name and Area are required' });
     
     // Security check
@@ -41,10 +115,13 @@ export const createCenter = async (req: Request, res: Response): Promise<any> =>
       }
     }
 
+    // Auto-generate center code from name (e.g. "Sattur" → SAT001)
+    const generatedCode = await generateCenterCode(name);
+
     const center = await prisma.center.create({
       data: {
         name,
-        code: code || null,
+        code: generatedCode,
         centerTime: centerTime || null,
         repaymentType: repaymentType || 'WEEKLY',
         disbursMode: disbursMode || 'CASH',

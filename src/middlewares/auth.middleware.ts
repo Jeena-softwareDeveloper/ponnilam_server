@@ -44,7 +44,10 @@ export const authenticateToken = async (req: AuthRequest, res: Response, next: N
       return res.status(403).json({ error: 'Access denied. User account is inactive.' });
     }
 
-    req.user = staff;
+    req.user = {
+      ...staff,
+      branchId: staff.branchId || staff.area?.branchId || null
+    };
     next();
   } catch (error) {
     return res.status(403).json({ error: 'Invalid token.' });

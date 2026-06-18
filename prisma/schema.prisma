@@ -384,7 +384,8 @@ model LoanSchedule {
   id        String    @id @default(uuid())
   dueDate   DateTime
   emiAmount Float
-  status    String    @default("PENDING") // PENDING, PAID
+  amountPaid Float  @default(0)
+  status    String    @default("PENDING") // PENDING, PARTIAL, PAID
   paidDate  DateTime?
 
   loanId String
