@@ -130,7 +130,8 @@ export const deleteCenter = async (req: Request, res: Response): Promise<any> =>
     return res.status(200).json({ message: 'Center deleted successfully' });
   } catch (error: any) {
     if (error.code === 'P2025') return res.status(404).json({ error: 'Center not found' });
-    if (error.code === 'P2003' || error.code === 'P2014' || (error.message && error.message.includes('foreign key constraint'))) {
+    const errStr = String(error);
+    if (error.code === 'P2003' || error.code === 'P2014' || errStr.includes('foreign key constraint') || errStr.includes('23001')) {
       return res.status(400).json({ error: 'Cannot delete center because it has associated data' });
     }
     console.error('Error deleting center:', error);
