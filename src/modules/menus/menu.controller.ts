@@ -124,7 +124,15 @@ export const assignBranchMenus = async (req: Request, res: Response): Promise<an
       await prisma.branchMenu.createMany({ data });
     }
 
-    const staffsInBranch = await prisma.staff.findMany({ where: { branchId }, select: { id: true } });
+    const staffsInBranch = await prisma.staff.findMany({ 
+      where: { 
+        OR: [
+          { branchId: branchId },
+          { area: { branchId: branchId } }
+        ]
+      }, 
+      select: { id: true } 
+    });
     const staffIds = staffsInBranch.map(s => s.id);
     if (staffIds.length > 0) {
       await prisma.staffMenu.deleteMany({ where: { staffId: { in: staffIds } } });

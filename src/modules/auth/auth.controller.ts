@@ -119,7 +119,8 @@ export const getAuthMenus = async (req: Request, res: Response): Promise<any> =>
       include: {
         role: true,
         menus: { include: { menu: true } },
-        branch: { include: { menus: { include: { menu: true } } } }
+        branch: { include: { menus: { include: { menu: true } } } },
+        area: { include: { branch: { include: { menus: { include: { menu: true } } } } } }
       }
     });
 
@@ -138,6 +139,8 @@ export const getAuthMenus = async (req: Request, res: Response): Promise<any> =>
       allowedMenus = staffSpecificMenus;
     } else if (staff.branch && staff.branch.menus) {
       allowedMenus = staff.branch.menus.map((bm: any) => bm.menu);
+    } else if (staff.area && staff.area.branch && staff.area.branch.menus) {
+      allowedMenus = staff.area.branch.menus.map((bm: any) => bm.menu);
     }
 
     return res.status(200).json(allowedMenus);
