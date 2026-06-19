@@ -88,7 +88,17 @@ export const getCenterById = async (req: Request, res: Response): Promise<any> =
     const { id } = req.params;
     const center = await prisma.center.findUnique({
       where: { id: String(id) },
-      include: { employee: true, area: true }
+      include: { 
+        employee: true, 
+        area: true,
+        customers: {
+          include: {
+            loans: {
+              select: { status: true, outstandingAmount: true }
+            }
+          }
+        }
+      }
     });
     if (!center) return res.status(404).json({ error: 'Center not found' });
 
@@ -100,7 +110,30 @@ export const getCenterById = async (req: Request, res: Response): Promise<any> =
       }
     }
 
-    return res.status(200).json(center);
+    let activeLoansCount = 0;
+    let pendingSetupCount = 0;
+    let totalOutstandingAmount = 0;
+
+    center.customers.forEach(customer => {
+      const activeLoans = customer.loans.filter(l => l.status === 'ACTIVE');
+      if (activeLoans.length > 0) {
+        activeLoansCount++;
+        totalOutstandingAmount += activeLoans.reduce((sum, l) => sum + (l.outstandingAmount || 0), 0);
+      } else {
+        pendingSetupCount++;
+      }
+    });
+
+    const { customers, ...rest } = center;
+
+    return res.status(200).json({
+      ...rest,
+      customers,
+      activeLoansCount,
+      pendingSetupCount,
+      totalOutstandingAmount,
+      totalMembers: customers.length
+    });
   } catch (error) {
     console.error('Error fetching center by id:', error);
     return res.status(500).json({ error: 'Internal server error' });
