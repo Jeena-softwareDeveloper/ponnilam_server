@@ -9,18 +9,18 @@ export const login = async (req: Request, res: Response): Promise<any> => {
   try {
     const { username, password } = req.body;
 
-    // 1. Fallback / Super Admin check
+    // 1. Fallback / Admin check
     const envUser = process.env.ADMIN_USERNAME || 'admin';
     const envPass = process.env.ADMIN_PASSWORD || 'password123';
 
     if (username === envUser && password === envPass) {
       const token = jwt.sign(
-        { id: 'env-admin', role: { name: 'Super Admin' } },
+        { id: 'env-admin', role: { name: 'Admin' } },
         process.env.JWT_SECRET || 'fallback_secret',
         { expiresIn: '1d' }
       );
       
-      return res.status(200).json({ message: 'Login successful', token, user: { name: 'Super Admin', role: 'Super Admin' } });
+      return res.status(200).json({ message: 'Login successful', token, user: { name: 'Admin', role: 'Admin' } });
     }
 
     // 2. Database Check
@@ -116,7 +116,7 @@ export const getAuthMenus = async (req: Request, res: Response): Promise<any> =>
       const allMenus = await prisma.menu.findMany({
         orderBy: { name: 'asc' }
       });
-      return res.status(200).json(allMenus.filter(m => !operationalMenus.includes(m.name)));
+      return res.status(200).json(allMenus);
     }
 
     const staff = await prisma.staff.findUnique({
@@ -131,11 +131,11 @@ export const getAuthMenus = async (req: Request, res: Response): Promise<any> =>
 
     if (!staff) return res.status(404).json({ error: 'Staff not found' });
 
-    if (staff.role?.name === 'Super Admin') {
+    if (staff.role?.name === 'Admin' || staff.role?.name === 'Admin') {
       const allMenus = await prisma.menu.findMany({
         orderBy: { name: 'asc' }
       });
-      return res.status(200).json(allMenus.filter(m => !operationalMenus.includes(m.name)));
+      return res.status(200).json(allMenus);
     }
 
     let allowedMenus: any[] = [];

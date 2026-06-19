@@ -7,11 +7,10 @@ const prisma = new PrismaClient();
 async function main() {
   console.log('Start seeding...');
 
-  // 1. Create Roles
   const superAdminRole = await prisma.role.upsert({
-    where: { name: 'Super Admin' },
+    where: { name: 'Admin' },
     update: {},
-    create: { name: 'Super Admin', isActive: true },
+    create: { name: 'Admin', isActive: true },
   });
 
   const branchManagerRole = await prisma.role.upsert({
@@ -24,6 +23,12 @@ async function main() {
     where: { name: 'Cashier' },
     update: {},
     create: { name: 'Cashier', isActive: true },
+  });
+
+  const collectionStaffRole = await prisma.role.upsert({
+    where: { name: 'Collection Staff' },
+    update: {},
+    create: { name: 'Collection Staff', isActive: true },
   });
 
   // 2. Create Menus
@@ -214,7 +219,7 @@ async function main() {
     },
   });
 
-  // 6. Create Super Admin Staff
+  // 6. Create Admin Staff
   const adminStaff = await prisma.staff.upsert({
     where: { phone: '9000000000' },
     update: {},
@@ -230,7 +235,7 @@ async function main() {
     },
   });
 
-  // 7. Map ALL Menus to Super Admin Staff
+  // 7. Map ALL Menus to Admin Staff
   const allMenus = await prisma.menu.findMany();
   
   for (const menu of allMenus) {

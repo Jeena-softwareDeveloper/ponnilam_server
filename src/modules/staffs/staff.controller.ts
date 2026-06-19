@@ -30,8 +30,8 @@ export const getStaffs = async (req: Request, res: Response): Promise<any> => {
       orderBy: { name: 'asc' },
     });
     
-    // Filter out super admin explicitly
-    const filteredStaffs = staffs.filter(s => s.username !== 'admin' && s.role?.name !== 'Super Admin');
+    // Filter out Admin explicitly
+    const filteredStaffs = staffs.filter(s => s.username !== 'admin' && s.role?.name !== 'Admin');
     return res.status(200).json(filteredStaffs);
   } catch (error) {
     console.error('Error fetching staffs:', error);

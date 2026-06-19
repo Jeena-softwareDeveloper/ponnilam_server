@@ -24,7 +24,7 @@ export const createCollection = async (req: Request, res: Response): Promise<any
 
     // Security check
     const user = (req as any).user;
-    if (user?.role?.name !== 'Super Admin' && user?.branchId) {
+    if (user?.role?.name !== 'Admin' && user?.branchId) {
       const loan = await prisma.loan.findUnique({ where: { id: loanId }, include: { customer: { include: { area: true } } } });
       if (!loan || loan.customer?.area?.branchId !== user.branchId) {
         return res.status(403).json({ error: 'Security Violation: Cannot create a collection for a loan outside your branch.' });

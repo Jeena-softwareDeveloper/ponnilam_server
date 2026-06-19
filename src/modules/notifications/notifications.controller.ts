@@ -10,8 +10,8 @@ export const getNotifications = async (req: Request, res: Response): Promise<any
     
     let whereClause: any = {};
     
-    // If not Super Admin, only show notifications for their branch
-    if (user?.role?.name !== 'Super Admin' && user?.branchId) {
+    // If not Admin, only show notifications for their branch
+    if (user?.role?.name !== 'Admin' && user?.branchId) {
       whereClause = { branchId: user.branchId };
     }
 
@@ -37,7 +37,7 @@ export const markAsRead = async (req: Request, res: Response): Promise<any> => {
     const notif = await prisma.notification.findUnique({ where: { id: id as string } });
     if (!notif) return res.status(404).json({ error: 'Notification not found' });
     
-    if (user?.role?.name !== 'Super Admin' && user?.branchId) {
+    if (user?.role?.name !== 'Admin' && user?.branchId) {
       if (notif.branchId !== user.branchId) {
         return res.status(403).json({ error: 'Forbidden' });
       }
@@ -63,7 +63,7 @@ export const approvePasswordReset = async (req: Request, res: Response): Promise
     const notif = await prisma.notification.findUnique({ where: { id: id as string } });
     if (!notif) return res.status(404).json({ error: 'Notification not found' });
     
-    if (user?.role?.name !== 'Super Admin' && user?.branchId) {
+    if (user?.role?.name !== 'Admin' && user?.branchId) {
       if (notif.branchId !== user.branchId) {
         return res.status(403).json({ error: 'Forbidden' });
       }
@@ -115,7 +115,7 @@ export const rejectPasswordReset = async (req: Request, res: Response): Promise<
     const notif = await prisma.notification.findUnique({ where: { id: id as string } });
     if (!notif) return res.status(404).json({ error: 'Notification not found' });
     
-    if (user?.role?.name !== 'Super Admin' && user?.branchId) {
+    if (user?.role?.name !== 'Admin' && user?.branchId) {
       if (notif.branchId !== user.branchId) {
         return res.status(403).json({ error: 'Forbidden' });
       }

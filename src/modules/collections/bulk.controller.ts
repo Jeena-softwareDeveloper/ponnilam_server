@@ -60,7 +60,7 @@ export const processBulkCollection = async (req: Request, res: Response): Promis
         });
 
         if (!loan) throw new Error(`Loan ${loanId} not found`);
-        if (user?.role?.name !== 'Super Admin' && user?.branchId) {
+        if (user?.role?.name !== 'Admin' && user?.branchId) {
           if (loan.customer?.area?.branchId !== user.branchId) {
             throw new Error(`Security Violation: Cannot process collection for loan ${loan.loanNumber}`);
           }

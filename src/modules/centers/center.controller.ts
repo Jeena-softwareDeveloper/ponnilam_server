@@ -72,7 +72,8 @@ export const getCenters = async (req: Request, res: Response): Promise<any> => {
       return {
         ...rest,
         activeLoansCount,
-        pendingSetupCount
+        pendingSetupCount,
+        mappedCustomersCount: customers.length
       };
     });
 
@@ -104,7 +105,7 @@ export const getCenterById = async (req: Request, res: Response): Promise<any> =
 
     // Security check
     const user = (req as any).user;
-    if (user?.role?.name !== 'Super Admin' && user?.branchId) {
+    if (user?.role?.name !== 'Admin' && user?.branchId) {
       if (center.area?.branchId !== user.branchId) {
         return res.status(403).json({ error: 'Security Violation: Cannot view a center outside your branch.' });
       }
@@ -147,7 +148,7 @@ export const createCenter = async (req: Request, res: Response): Promise<any> =>
     
     // Security check
     const user = (req as any).user;
-    if (user?.role?.name !== 'Super Admin' && user?.branchId) {
+    if (user?.role?.name !== 'Admin' && user?.branchId) {
       const area = await prisma.area.findUnique({ where: { id: areaId } });
       if (!area || area.branchId !== user.branchId) {
         return res.status(403).json({ error: 'Security Violation: Cannot create a center in an area outside your branch.' });
@@ -192,7 +193,7 @@ export const updateCenter = async (req: Request, res: Response): Promise<any> =>
     if (!existingCenter) return res.status(404).json({ error: 'Center not found' });
     
     const user = (req as any).user;
-    if (user?.role?.name !== 'Super Admin' && user?.branchId) {
+    if (user?.role?.name !== 'Admin' && user?.branchId) {
       if (existingCenter.area?.branchId !== user.branchId) {
         return res.status(403).json({ error: 'Security Violation: Cannot modify a center from another branch.' });
       }
@@ -236,7 +237,7 @@ export const deleteCenter = async (req: Request, res: Response): Promise<any> =>
     if (!existingCenter) return res.status(404).json({ error: 'Center not found' });
     
     const user = (req as any).user;
-    if (user?.role?.name !== 'Super Admin' && user?.branchId) {
+    if (user?.role?.name !== 'Admin' && user?.branchId) {
       if (existingCenter.area?.branchId !== user.branchId) {
         return res.status(403).json({ error: 'Security Violation: Cannot delete a center from another branch.' });
       }

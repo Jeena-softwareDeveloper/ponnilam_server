@@ -6,7 +6,7 @@ const prisma = new PrismaClient();
 export const getRoles = async (req: Request, res: Response): Promise<any> => {
   try {
     const roles = await prisma.role.findMany({ 
-      where: { name: { not: 'Super Admin' } },
+      where: { name: { not: 'Admin' } },
       orderBy: { name: 'asc' } 
     });
     return res.status(200).json(roles);

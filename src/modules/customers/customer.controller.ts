@@ -51,7 +51,7 @@ export const createCustomer = async (req: Request, res: Response) => {
 
     // Security Check: Enforce Branch Scoping
     const user = (req as any).user;
-    if (general?.areaId && user?.role?.name !== 'Super Admin' && user?.branchId) {
+    if (general?.areaId && user?.role?.name !== 'Admin' && user?.branchId) {
       const area = await prisma.area.findUnique({ where: { id: general.areaId } });
       if (!area) return res.status(400).json({ error: 'Invalid area selected' });
       if (area.branchId !== user.branchId) {
@@ -166,7 +166,7 @@ export const updateCustomer = async (req: Request, res: Response) => {
     }
 
     const user = (req as any).user;
-    if (user?.role?.name !== 'Super Admin' && user?.branchId) {
+    if (user?.role?.name !== 'Admin' && user?.branchId) {
       // Check if they have access to the EXISTING customer's branch
       if (existingCustomer.area?.branchId && existingCustomer.area.branchId !== user.branchId) {
         return res.status(403).json({ error: 'Security Violation: You are not authorized to modify a customer from another branch.' });
@@ -326,9 +326,9 @@ export const getCustomers = async (req: Request, res: Response) => {
     
     if (search) {
       where.OR = [
-        { name: { contains: String(search), mode: 'insensitive' } },
-        { mobile: { contains: String(search), mode: 'insensitive' } },
-        { customerNo: { contains: String(search), mode: 'insensitive' } }
+        { name: { contains: String(search) } },
+        { mobile: { contains: String(search) } },
+        { customerNo: { contains: String(search) } }
       ];
     }
     

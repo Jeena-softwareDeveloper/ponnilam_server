@@ -32,7 +32,7 @@ export const createLoan = async (req: Request, res: Response) => {
 
     // Security check
     const user = (req as any).user;
-    if (user?.role?.name !== 'Super Admin' && user?.branchId) {
+    if (user?.role?.name !== 'Admin' && user?.branchId) {
       const customer = await prisma.customer.findUnique({ where: { id: customerId }, include: { area: true } });
       if (!customer || customer.area?.branchId !== user.branchId) {
         return res.status(403).json({ error: 'Security Violation: Cannot create a loan for a customer outside your branch.' });
@@ -137,7 +137,7 @@ export const updateLoanStatus = async (req: Request, res: Response): Promise<any
     if (!existingLoan) return res.status(404).json({ error: 'Loan not found' });
     
     const user = (req as any).user;
-    if (user?.role?.name !== 'Super Admin' && user?.branchId) {
+    if (user?.role?.name !== 'Admin' && user?.branchId) {
       if (existingLoan.customer?.area?.branchId !== user.branchId) {
         return res.status(403).json({ error: 'Security Violation: Cannot update a loan for a customer outside your branch.' });
       }
@@ -232,7 +232,7 @@ export const deleteLoan = async (req: Request, res: Response): Promise<any> => {
     if (!existingLoan) return res.status(404).json({ error: 'Loan not found' });
     
     const user = (req as any).user;
-    if (user?.role?.name !== 'Super Admin' && user?.branchId) {
+    if (user?.role?.name !== 'Admin' && user?.branchId) {
       if (existingLoan.customer?.area?.branchId !== user.branchId) {
         return res.status(403).json({ error: 'Security Violation: Cannot delete a loan for a customer outside your branch.' });
       }

@@ -19,12 +19,12 @@ export const authenticateToken = async (req: AuthRequest, res: Response, next: N
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret') as any;
 
-    // Super Admin Fallback
+    // Admin Fallback
     if (decoded.id === 'env-admin') {
       req.user = {
         id: 'env-admin',
-        name: 'Super Admin',
-        role: { name: 'Super Admin' },
+        name: 'Admin',
+        role: { name: 'Admin' },
         branchId: null
       };
       return next();
@@ -56,7 +56,7 @@ export const authenticateToken = async (req: AuthRequest, res: Response, next: N
 };
 
 export const branchScope = async (req: AuthRequest, res: Response, next: NextFunction): Promise<any> => {
-  if (req.user?.role?.name !== 'Super Admin') {
+  if (req.user?.role?.name !== 'Admin') {
 
     // ─── Force branchId / areaId on query and body ───────────────────────────
     if (req.user?.branchId) {
@@ -93,7 +93,7 @@ export const branchScope = async (req: AuthRequest, res: Response, next: NextFun
       res.locals.areaIds = [];
     }
   } else {
-    // Super Admin — no restriction
+    // Admin — no restriction
     res.locals.areaIds = [];
   }
 

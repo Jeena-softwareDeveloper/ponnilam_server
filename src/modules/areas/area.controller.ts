@@ -47,7 +47,7 @@ export const updateArea = async (req: Request, res: Response): Promise<any> => {
     if (!existingArea) return res.status(404).json({ error: 'Area not found' });
     
     const user = (req as any).user;
-    if (user?.role?.name !== 'Super Admin' && user?.branchId) {
+    if (user?.role?.name !== 'Admin' && user?.branchId) {
       if (existingArea.branchId !== user.branchId) {
         return res.status(403).json({ error: 'Security Violation: Cannot modify an area from another branch.' });
       }
@@ -78,7 +78,7 @@ export const deleteArea = async (req: Request, res: Response): Promise<any> => {
     if (!existingArea) return res.status(404).json({ error: 'Area not found' });
     
     const user = (req as any).user;
-    if (user?.role?.name !== 'Super Admin' && user?.branchId) {
+    if (user?.role?.name !== 'Admin' && user?.branchId) {
       if (existingArea.branchId !== user.branchId) {
       }
     }
