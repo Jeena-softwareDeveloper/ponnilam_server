@@ -7,28 +7,17 @@ const prisma = new PrismaClient();
 async function main() {
   console.log('Start seeding...');
 
+  // 1. Create Roles
   const superAdminRole = await prisma.role.upsert({
     where: { name: 'Admin' },
     update: {},
     create: { name: 'Admin', isActive: true },
   });
 
-  const branchManagerRole = await prisma.role.upsert({
-    where: { name: 'Branch Manager' },
+  const staffRole = await prisma.role.upsert({
+    where: { name: 'Staff' },
     update: {},
-    create: { name: 'Branch Manager', isActive: true },
-  });
-
-  const cashierRole = await prisma.role.upsert({
-    where: { name: 'Cashier' },
-    update: {},
-    create: { name: 'Cashier', isActive: true },
-  });
-
-  const collectionStaffRole = await prisma.role.upsert({
-    where: { name: 'Collection Staff' },
-    update: {},
-    create: { name: 'Collection Staff', isActive: true },
+    create: { name: 'Staff', isActive: true },
   });
 
   // 2. Create Menus
@@ -154,72 +143,7 @@ async function main() {
     create: { name: 'Permissions', path: '/admin/masters/permissions', icon: 'Shield', parentId: mastersMenu.id },
   });
 
-  // 3. Create Branches
-  const branch1 = await prisma.branch.upsert({
-    where: { code: 'BR-001' },
-    update: {},
-    create: { name: 'Anna Nagar Branch', code: 'BR-001', location: '123 Main St', phone: '9876543210', isActive: true },
-  });
-
-  const branch2 = await prisma.branch.upsert({
-    where: { code: 'BR-002' },
-    update: {},
-    create: { name: 'T Nagar Branch', code: 'BR-002', location: '45 South Mada St', phone: '9876543211', isActive: true },
-  });
-
-  // 4. Create Areas
-  const area1 = await prisma.area.upsert({
-    where: { name: 'Anna Nagar Area' },
-    update: {},
-    create: { name: 'Anna Nagar Area', branchId: branch1.id, isActive: true },
-  });
-
-  const area2 = await prisma.area.upsert({
-    where: { name: 'T Nagar Area' },
-    update: {},
-    create: { name: 'T Nagar Area', branchId: branch2.id, isActive: true },
-  });
-
-  // 5. Create Centers
-  const center1 = await prisma.center.upsert({
-    where: { name: 'ESWARI RAJIV GANDHI NAGAR' },
-    update: {
-      centerTime: '6.30AM',
-      repaymentType: 'WEEKLY',
-      disbursMode: 'CASH',
-      areaId: area1.id,
-    },
-    create: { 
-      name: 'ESWARI RAJIV GANDHI NAGAR', 
-      code: 'CHN', 
-      centerTime: '6.30AM',
-      repaymentType: 'WEEKLY',
-      disbursMode: 'CASH',
-      areaId: area1.id,
-      isActive: true 
-    },
-  });
-
-  const center2 = await prisma.center.upsert({
-    where: { name: 'GURUNATHAL DASARIPALAYAM' },
-    update: {
-      centerTime: '8.00AM',
-      repaymentType: 'MONTHLY',
-      disbursMode: 'BANK',
-      areaId: area2.id,
-    },
-    create: { 
-      name: 'GURUNATHAL DASARIPALAYAM', 
-      code: 'MDU', 
-      centerTime: '8.00AM',
-      repaymentType: 'MONTHLY',
-      disbursMode: 'BANK',
-      areaId: area2.id,
-      isActive: true 
-    },
-  });
-
-  // 6. Create Admin Staff
+  // 3. Create Admin Staff (One Admin)
   const adminStaff = await prisma.staff.upsert({
     where: { phone: '9000000000' },
     update: {},
@@ -230,12 +154,12 @@ async function main() {
       phone: '9000000000',
       password: await bcrypt.hash('password123', 10),
       isActive: true,
-      branchId: branch1.id,
+      branchId: null, // No branch assigned to super admin
       roleId: superAdminRole.id,
     },
   });
 
-  // 7. Map ALL Menus to Admin Staff
+  // 4. Map ALL Menus to Admin Staff
   const allMenus = await prisma.menu.findMany();
   
   for (const menu of allMenus) {
@@ -245,23 +169,17 @@ async function main() {
     
     if (!existingPerm) {
       await prisma.staffMenu.create({
-        data: { staffId: adminStaff.id, menuId: menu.id }
+        data: { 
+          staffId: adminStaff.id, 
+          menuId: menu.id, 
+          canView: true, 
+          canCreate: true, 
+          canEdit: true, 
+          canDelete: true 
+        }
       });
     }
   }
-
-  // 8. Create Loan Packages
-  await prisma.loanPackage.upsert({
-    where: { name: '100 Days Daily' },
-    update: {},
-    create: { name: '100 Days Daily', interestRate: 10, durationDays: 100, frequency: 'DAILY', isActive: true },
-  });
-
-  await prisma.loanPackage.upsert({
-    where: { name: '50 Weeks Weekly' },
-    update: {},
-    create: { name: '50 Weeks Weekly', interestRate: 15, durationDays: 350, frequency: 'WEEKLY', isActive: true },
-  });
 
   console.log('Seeding finished.');
 }

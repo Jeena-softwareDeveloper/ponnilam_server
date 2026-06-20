@@ -110,13 +110,13 @@ export const getAuthMenus = async (req: Request, res: Response): Promise<any> =>
     const user = (req as any).user;
     if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
-    const operationalMenus = ['Centers', 'Customers', 'Collections', 'Reports', 'Customer Ledger', 'Loans'];
+    // Admin (env or role) gets all menus with full CRUD
+    const buildFullAccess = (menus: any[]) =>
+      menus.map(m => ({ ...m, canView: true, canCreate: true, canEdit: true, canDelete: true }));
 
     if (user.id === 'env-admin') {
-      const allMenus = await prisma.menu.findMany({
-        orderBy: { name: 'asc' }
-      });
-      return res.status(200).json(allMenus);
+      const allMenus = await prisma.menu.findMany({ orderBy: { name: 'asc' } });
+      return res.status(200).json(buildFullAccess(allMenus));
     }
 
     const staff = await prisma.staff.findUnique({
@@ -131,24 +131,43 @@ export const getAuthMenus = async (req: Request, res: Response): Promise<any> =>
 
     if (!staff) return res.status(404).json({ error: 'Staff not found' });
 
-    if (staff.role?.name === 'Admin' || staff.role?.name === 'Admin') {
-      const allMenus = await prisma.menu.findMany({
-        orderBy: { name: 'asc' }
-      });
-      return res.status(200).json(allMenus);
+    if (staff.role?.name === 'Admin') {
+      const allMenus = await prisma.menu.findMany({ orderBy: { name: 'asc' } });
+      return res.status(200).json(buildFullAccess(allMenus));
     }
 
-    let allowedMenus: any[] = [];
-    const staffSpecificMenus = staff.menus.map((sm: any) => sm.menu);
+    // Non-admin: build menus WITH their CRUD permissions
+    let allowedEntries: any[] = [];
+    const staffSpecificMenus = staff.menus; // StaffMenu[] with canView etc.
+
     if (staffSpecificMenus.length > 0) {
-      allowedMenus = staffSpecificMenus;
-    } else if (staff.branch && staff.branch.menus) {
-      allowedMenus = staff.branch.menus.map((bm: any) => bm.menu);
-    } else if (staff.area && staff.area.branch && staff.area.branch.menus) {
-      allowedMenus = staff.area.branch.menus.map((bm: any) => bm.menu);
+      allowedEntries = staffSpecificMenus.map((sm: any) => ({
+        ...sm.menu,
+        canView: sm.canView,
+        canCreate: sm.canCreate,
+        canEdit: sm.canEdit,
+        canDelete: sm.canDelete,
+      }));
+    } else if (staff.branch?.menus?.length) {
+      allowedEntries = staff.branch.menus.map((bm: any) => ({
+        ...bm.menu,
+        canView: bm.canView,
+        canCreate: bm.canCreate,
+        canEdit: bm.canEdit,
+        canDelete: bm.canDelete,
+      }));
+    } else if (staff.area?.branch?.menus?.length) {
+      allowedEntries = staff.area.branch.menus.map((bm: any) => ({
+        ...bm.menu,
+        canView: bm.canView,
+        canCreate: bm.canCreate,
+        canEdit: bm.canEdit,
+        canDelete: bm.canDelete,
+      }));
     }
 
-    return res.status(200).json(allowedMenus);
+    // Filter to only menus with canView = true
+    return res.status(200).json(allowedEntries.filter((m: any) => m.canView !== false));
   } catch (error) {
     console.error('Error fetching auth menus:', error);
     return res.status(500).json({ error: 'Internal server error' });

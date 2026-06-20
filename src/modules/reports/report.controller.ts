@@ -58,13 +58,16 @@ export const getCollectionReport = async (req: Request, res: Response) => {
 // 2. Center Detail Report
 export const getCenterDetailReport = async (req: Request, res: Response) => {
   try {
-    const { branchId, areaId, centerId } = req.query as Record<string, string>;
+    const { branchId, areaId, centerId, staffId } = req.query as Record<string, string>;
     const user = (req as any).user;
     const userBranchId = user?.branchId;
 
     const where: any = {};
     if (centerId) {
       where.id = centerId;
+    }
+    if (staffId) {
+      where.employeeId = staffId;
     }
     
     if (userBranchId) {
@@ -137,7 +140,17 @@ export const getCenterCustomerReport = async (req: Request, res: Response) => {
         area: { include: { branch: true } },
         loans: {
           where: { status: { in: ['ACTIVE', 'APPROVED'] } },
-          select: { loanNumber: true, outstandingAmount: true, perDueAmount: true, status: true, amount: true }
+          select: { 
+            loanNumber: true, 
+            outstandingAmount: true, 
+            perDueAmount: true, 
+            status: true, 
+            amount: true,
+            schedules: {
+              where: { status: { in: ['PENDING', 'PARTIAL'] }, dueDate: { lt: new Date() } },
+              select: { emiAmount: true, amountPaid: true }
+            }
+          }
         }
       },
       orderBy: [{ center: { name: 'asc' } }, { name: 'asc' }]

@@ -182,6 +182,11 @@ model StaffMenu {
   menuId  String
   menu    Menu   @relation(fields: [menuId], references: [id], onDelete: Cascade)
 
+  canView   Boolean @default(true)
+  canCreate Boolean @default(false)
+  canEdit   Boolean @default(false)
+  canDelete Boolean @default(false)
+
   createdAt DateTime @default(now())
 
   @@unique([staffId, menuId])
@@ -193,6 +198,11 @@ model BranchMenu {
   branch   Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
   menuId   String
   menu     Menu   @relation(fields: [menuId], references: [id], onDelete: Cascade)
+
+  canView   Boolean @default(true)
+  canCreate Boolean @default(false)
+  canEdit   Boolean @default(false)
+  canDelete Boolean @default(false)
 
   createdAt DateTime @default(now())
 
