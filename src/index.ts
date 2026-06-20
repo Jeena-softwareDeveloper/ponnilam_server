@@ -24,6 +24,7 @@ import notificationRoutes from './modules/notifications/notifications.routes';
 // Import Middlewares
 import { authenticateToken, branchScope } from './middlewares/auth.middleware';
 import { auditMiddleware } from './middlewares/audit.middleware';
+import { errorHandler } from './middlewares/error.middleware';
 
 dotenv.config();
 
@@ -69,6 +70,9 @@ app.use('/api/v1/notifications', authenticateToken, notificationRoutes);
 app.get('/', (req, res) => {
   res.json({ message: 'NBFC Finance API is running' });
 });
+
+// Global Error Handler (must be the last middleware)
+app.use(errorHandler);
 
 const PORT = process.env.PORT || 5000;
 

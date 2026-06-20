@@ -19,16 +19,6 @@ export const authenticateToken = async (req: AuthRequest, res: Response, next: N
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret') as any;
 
-    // Admin Fallback
-    if (decoded.id === 'env-admin') {
-      req.user = {
-        id: 'env-admin',
-        name: 'Admin',
-        role: { name: 'Admin' },
-        branchId: null
-      };
-      return next();
-    }
 
     // Lookup staff in DB to get role and branch details
     const staff = await prisma.staff.findUnique({

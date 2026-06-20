@@ -8,7 +8,7 @@ async function main() {
   console.log('Start seeding...');
 
   // 1. Create Roles
-  const superAdminRole = await prisma.role.upsert({
+  const adminRole = await prisma.role.upsert({
     where: { name: 'Admin' },
     update: {},
     create: { name: 'Admin', isActive: true },
@@ -154,8 +154,8 @@ async function main() {
       phone: '9000000000',
       password: await bcrypt.hash('password123', 10),
       isActive: true,
-      branchId: null, // No branch assigned to super admin
-      roleId: superAdminRole.id,
+      branchId: null,
+      roleId: adminRole.id,
     },
   });
 

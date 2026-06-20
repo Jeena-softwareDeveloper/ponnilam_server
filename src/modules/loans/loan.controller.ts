@@ -1,5 +1,7 @@
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
+import { asyncHandler } from '../../utils/asyncHandler';
+import { requireBranchAccess } from '../../utils/security.utils';
 
 const prisma = new PrismaClient();
 
@@ -18,8 +20,7 @@ const generateLoanNo = async () => {
   return `L${nextNo}`;
 };
 
-export const createLoan = async (req: Request, res: Response) => {
-  try {
+export const createLoan = asyncHandler(async (req: Request, res: Response) => {
     const {
       customerId, staffId, amount, noOfDues, perDueAmount, totalDueAmount,
       deductionAmount, netDisbursement,
@@ -32,12 +33,9 @@ export const createLoan = async (req: Request, res: Response) => {
 
     // Security check
     const user = (req as any).user;
-    if (user?.role?.name !== 'Admin' && user?.branchId) {
-      const customer = await prisma.customer.findUnique({ where: { id: customerId }, include: { area: true } });
-      if (!customer || customer.area?.branchId !== user.branchId) {
-        return res.status(403).json({ error: 'Security Violation: Cannot create a loan for a customer outside your branch.' });
-      }
-    }
+    const customer = await prisma.customer.findUnique({ where: { id: customerId }, include: { area: true } });
+    if (!customer) throw new Error('Customer not found');
+    requireBranchAccess(user, customer.area?.branchId, 'create a loan for a customer outside your branch');
 
     const loanNumber = await generateLoanNo();
 
@@ -119,14 +117,9 @@ export const createLoan = async (req: Request, res: Response) => {
     }
 
     res.status(201).json(loan);
-  } catch (error) {
-    console.error('Create Loan Error:', error);
-    res.status(500).json({ error: 'Failed to sanction loan' });
-  }
-};
+});
 
-export const updateLoanStatus = async (req: Request, res: Response): Promise<any> => {
-  try {
+export const updateLoanStatus = asyncHandler(async (req: Request, res: Response) => {
     const { id } = req.params;
     const { status, remarks } = req.body;
 
@@ -134,14 +127,10 @@ export const updateLoanStatus = async (req: Request, res: Response): Promise<any
       where: { id: id as string }, 
       include: { customer: { include: { area: true } } } 
     }) as any;
-    if (!existingLoan) return res.status(404).json({ error: 'Loan not found' });
+    if (!existingLoan) throw new Error('Loan not found');
     
     const user = (req as any).user;
-    if (user?.role?.name !== 'Admin' && user?.branchId) {
-      if (existingLoan.customer?.area?.branchId !== user.branchId) {
-        return res.status(403).json({ error: 'Security Violation: Cannot update a loan for a customer outside your branch.' });
-      }
-    }
+    requireBranchAccess(user, existingLoan.customer?.area?.branchId, 'update a loan for a customer outside your branch');
 
     const loan = await prisma.loan.update({
       where: { id: String(id) },
@@ -149,13 +138,9 @@ export const updateLoanStatus = async (req: Request, res: Response): Promise<any
     });
 
     res.json(loan);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to update loan status' });
-  }
-};
+});
 
-export const getLoans = async (req: Request, res: Response) => {
-  try {
+export const getLoans = asyncHandler(async (req: Request, res: Response) => {
     const { customerId, status, branchId, centerId } = req.query;
     const where: any = {};
     if (customerId) where.customerId = String(customerId);
@@ -187,13 +172,9 @@ export const getLoans = async (req: Request, res: Response) => {
       orderBy: { createdAt: 'desc' }
     });
     res.json(loans);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch loans' });
-  }
-};
+});
 
-export const getLoanById = async (req: Request, res: Response) => {
-  try {
+export const getLoanById = asyncHandler(async (req: Request, res: Response) => {
     const { id } = req.params;
     const loan = await prisma.loan.findUnique({
       where: { id: String(id) },
@@ -212,16 +193,11 @@ export const getLoanById = async (req: Request, res: Response) => {
       }
     });
 
-    if (!loan) return res.status(404).json({ error: 'Loan not found' });
+    if (!loan) throw new Error('Loan not found');
     res.json(loan);
-  } catch (error) {
-    console.error('getLoanById Error:', error);
-    res.status(500).json({ error: 'Failed to fetch loan details' });
-  }
-};
+});
 
-export const deleteLoan = async (req: Request, res: Response): Promise<any> => {
-  try {
+export const deleteLoan = asyncHandler(async (req: Request, res: Response) => {
     const { id } = req.params;
 
     // Security check
@@ -229,19 +205,11 @@ export const deleteLoan = async (req: Request, res: Response): Promise<any> => {
       where: { id: id as string },
       include: { customer: { include: { area: true } } }
     }) as any;
-    if (!existingLoan) return res.status(404).json({ error: 'Loan not found' });
+    if (!existingLoan) throw new Error('Loan not found');
     
     const user = (req as any).user;
-    if (user?.role?.name !== 'Admin' && user?.branchId) {
-      if (existingLoan.customer?.area?.branchId !== user.branchId) {
-        return res.status(403).json({ error: 'Security Violation: Cannot delete a loan for a customer outside your branch.' });
-      }
-    }
+    requireBranchAccess(user, existingLoan.customer?.area?.branchId, 'delete a loan for a customer outside your branch');
 
     await prisma.loan.delete({ where: { id: String(id) } });
     res.json({ message: 'Loan deleted successfully' });
-  } catch (error) {
-    console.error('Delete Loan Error:', error);
-    res.status(500).json({ error: 'Failed to delete loan' });
-  }
-};
+});

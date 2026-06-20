@@ -1,5 +1,7 @@
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
+import { asyncHandler } from '../../utils/asyncHandler';
+import { requireBranchAccess } from '../../utils/security.utils';
 
 const prisma = new PrismaClient();
 
@@ -25,8 +27,7 @@ const generateCustomerNo = async (branchId?: string) => {
   return `${prefix}${nextNo.toString().padStart(3, '0')}`;
 };
 
-export const createCustomer = async (req: Request, res: Response) => {
-  try {
+export const createCustomer = asyncHandler(async (req: Request, res: Response) => {
     const {
       general,
       coApplicant,
@@ -51,12 +52,10 @@ export const createCustomer = async (req: Request, res: Response) => {
 
     // Security Check: Enforce Branch Scoping
     const user = (req as any).user;
-    if (general?.areaId && user?.role?.name !== 'Admin' && user?.branchId) {
+    if (general?.areaId) {
       const area = await prisma.area.findUnique({ where: { id: general.areaId } });
-      if (!area) return res.status(400).json({ error: 'Invalid area selected' });
-      if (area.branchId !== user.branchId) {
-        return res.status(403).json({ error: 'Security Violation: You are not authorized to create entries outside your assigned branch.' });
-      }
+      if (!area) throw new Error('Invalid area selected');
+      requireBranchAccess(user, area.branchId, 'create entries outside your assigned branch');
     }
 
     // Get the branchId for this customer (from area or logged-in user)
@@ -139,14 +138,9 @@ export const createCustomer = async (req: Request, res: Response) => {
     });
 
     res.status(201).json(customer);
-  } catch (error) {
-    console.error('Create Customer Error:', error);
-    res.status(500).json({ error: 'Failed to create customer' });
-  }
-};
+});
 
-export const updateCustomer = async (req: Request, res: Response) => {
-  try {
+export const updateCustomer = asyncHandler(async (req: Request, res: Response) => {
     const { id } = req.params;
     const {
       general,
@@ -162,22 +156,17 @@ export const updateCustomer = async (req: Request, res: Response) => {
     }) as any;
 
     if (!existingCustomer) {
-      return res.status(404).json({ error: 'Customer not found' });
+      throw new Error('Customer not found');
     }
 
     const user = (req as any).user;
-    if (user?.role?.name !== 'Admin' && user?.branchId) {
-      // Check if they have access to the EXISTING customer's branch
-      if (existingCustomer.area?.branchId && existingCustomer.area.branchId !== user.branchId) {
-        return res.status(403).json({ error: 'Security Violation: You are not authorized to modify a customer from another branch.' });
-      }
-      // Check if they are trying to move the customer to a new area outside their branch
-      if (general?.areaId && general.areaId !== existingCustomer.areaId) {
-        const newArea = await prisma.area.findUnique({ where: { id: general.areaId } });
-        if (newArea && newArea.branchId !== user.branchId) {
-          return res.status(403).json({ error: 'Security Violation: Cannot move customer to an area outside your assigned branch.' });
-        }
-      }
+    // Check if they have access to the EXISTING customer's branch
+    requireBranchAccess(user, existingCustomer.area?.branchId, 'modify a customer from another branch');
+    
+    // Check if they are trying to move the customer to a new area outside their branch
+    if (general?.areaId && general.areaId !== existingCustomer.areaId) {
+      const newArea = await prisma.area.findUnique({ where: { id: general.areaId } });
+      requireBranchAccess(user, newArea?.branchId, 'move customer to an area outside your assigned branch');
     }
 
     if (kyc?.idProof1No) {
@@ -312,14 +301,9 @@ export const updateCustomer = async (req: Request, res: Response) => {
     });
 
     res.json(customer);
-  } catch (error) {
-    console.error('Update Customer Error:', error);
-    res.status(500).json({ error: 'Failed to update customer' });
-  }
-};
+});
 
-export const getCustomers = async (req: Request, res: Response) => {
-  try {
+export const getCustomers = asyncHandler(async (req: Request, res: Response) => {
     const { search, areaId, centerId, branchId } = req.query;
 
     const where: any = {};
@@ -361,14 +345,9 @@ export const getCustomers = async (req: Request, res: Response) => {
     });
 
     res.json(customers);
-  } catch (error) {
-    console.error('Get Customers Error:', error);
-    res.status(500).json({ error: 'Failed to get customers' });
-  }
-};
+});
 
-export const getCustomerById = async (req: Request, res: Response) => {
-  try {
+export const getCustomerById = asyncHandler(async (req: Request, res: Response) => {
     const { id } = req.params;
 
     const where: any = { id: String(id) };
@@ -390,18 +369,13 @@ export const getCustomerById = async (req: Request, res: Response) => {
     });
 
     if (!customer) {
-      return res.status(404).json({ error: 'Customer not found or unauthorized' });
+      throw new Error('Customer not found or unauthorized');
     }
 
     res.json(customer);
-  } catch (error) {
-    console.error('Get Customer Error:', error);
-    res.status(500).json({ error: 'Failed to get customer details' });
-  }
-};
+});
 
-export const getCustomerLedger = async (req: Request, res: Response) => {
-  try {
+export const getCustomerLedger = asyncHandler(async (req: Request, res: Response) => {
     const { id } = req.params;
 
     const where: any = { id: String(id) };
@@ -426,40 +400,26 @@ export const getCustomerLedger = async (req: Request, res: Response) => {
     });
 
     if (!customer) {
-      return res.status(404).json({ error: 'Customer not found or unauthorized' });
+      throw new Error('Customer not found or unauthorized');
     }
 
     res.json(customer);
-  } catch (error) {
-    console.error('Get Customer Ledger Error:', error);
-    res.status(500).json({ error: 'Failed to get customer ledger' });
-  }
-};
+});
 
-export const deleteCustomer = async (req: Request, res: Response) => {
-  try {
+export const deleteCustomer = asyncHandler(async (req: Request, res: Response) => {
     const { id } = req.params;
     await prisma.customer.delete({ where: { id: String(id) } });
     res.json({ message: 'Customer deleted successfully' });
-  } catch (error) {
-    console.error('Delete Customer Error:', error);
-    res.status(500).json({ error: 'Failed to delete customer' });
-  }
-};
+});
 
-export const toggleCustomerStatus = async (req: Request, res: Response) => {
-  try {
+export const toggleCustomerStatus = asyncHandler(async (req: Request, res: Response) => {
     const { id } = req.params;
     const customer = await prisma.customer.findUnique({ where: { id: String(id) } });
-    if (!customer) return res.status(404).json({ error: 'Customer not found' });
+    if (!customer) throw new Error('Customer not found');
 
     const updated = await prisma.customer.update({
       where: { id: String(id) },
       data: { isActive: !customer.isActive }
     });
     res.json({ message: `Customer ${updated.isActive ? 'activated' : 'deactivated'} successfully`, isActive: updated.isActive });
-  } catch (error) {
-    console.error('Toggle Customer Status Error:', error);
-    res.status(500).json({ error: 'Failed to update customer status' });
-  }
-};
+});

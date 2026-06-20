@@ -2,28 +2,14 @@ import { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import { PrismaClient } from '@prisma/client';
+import { asyncHandler } from '../../utils/asyncHandler';
 
 const prisma = new PrismaClient();
 
-export const login = async (req: Request, res: Response): Promise<any> => {
-  try {
+export const login = asyncHandler(async (req: Request, res: Response) => {
     const { username, password } = req.body;
 
-    // 1. Fallback / Admin check
-    const envUser = process.env.ADMIN_USERNAME || 'admin';
-    const envPass = process.env.ADMIN_PASSWORD || 'password123';
-
-    if (username === envUser && password === envPass) {
-      const token = jwt.sign(
-        { id: 'env-admin', role: { name: 'Admin' } },
-        process.env.JWT_SECRET || 'fallback_secret',
-        { expiresIn: '1d' }
-      );
-      
-      return res.status(200).json({ message: 'Login successful', token, user: { name: 'Admin', role: 'Admin' } });
-    }
-
-    // 2. Database Check
+    // 1. Database Check
     const staff = await prisma.staff.findFirst({
       where: {
         OR: [
@@ -99,14 +85,9 @@ export const login = async (req: Request, res: Response): Promise<any> => {
       }
     });
 
-  } catch (error) {
-    console.error('Login error:', error);
-    return res.status(500).json({ error: 'Internal server error' });
-  }
-};
+});
 
-export const getAuthMenus = async (req: Request, res: Response): Promise<any> => {
-  try {
+export const getAuthMenus = asyncHandler(async (req: Request, res: Response) => {
     const user = (req as any).user;
     if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
@@ -114,10 +95,7 @@ export const getAuthMenus = async (req: Request, res: Response): Promise<any> =>
     const buildFullAccess = (menus: any[]) =>
       menus.map(m => ({ ...m, canView: true, canCreate: true, canEdit: true, canDelete: true }));
 
-    if (user.id === 'env-admin') {
-      const allMenus = await prisma.menu.findMany({ orderBy: { name: 'asc' } });
-      return res.status(200).json(buildFullAccess(allMenus));
-    }
+
 
     const staff = await prisma.staff.findUnique({
       where: { id: user.id },
@@ -168,14 +146,9 @@ export const getAuthMenus = async (req: Request, res: Response): Promise<any> =>
 
     // Filter to only menus with canView = true
     return res.status(200).json(allowedEntries.filter((m: any) => m.canView !== false));
-  } catch (error) {
-    console.error('Error fetching auth menus:', error);
-    return res.status(500).json({ error: 'Internal server error' });
-  }
-};
+});
 
-export const changePassword = async (req: Request, res: Response): Promise<any> => {
-  try {
+export const changePassword = asyncHandler(async (req: Request, res: Response) => {
     const user = (req as any).user;
     if (!user || !user.id || user.id === 'env-admin') {
       return res.status(401).json({ error: 'Unauthorized' });
@@ -193,14 +166,9 @@ export const changePassword = async (req: Request, res: Response): Promise<any> 
     });
 
     return res.status(200).json({ message: 'Password updated successfully' });
-  } catch (error) {
-    console.error('Change password error:', error);
-    return res.status(500).json({ error: 'Internal server error' });
-  }
-};
+});
 
-export const forgotPassword = async (req: Request, res: Response): Promise<any> => {
-  try {
+export const forgotPassword = asyncHandler(async (req: Request, res: Response) => {
     const { username } = req.body;
     if (!username) return res.status(400).json({ error: 'Username is required' });
 
@@ -240,8 +208,4 @@ export const forgotPassword = async (req: Request, res: Response): Promise<any> 
     });
 
     return res.status(200).json({ message: 'If the username exists, a reset request has been sent to the admin.' });
-  } catch (error) {
-    console.error('Forgot password error:', error);
-    return res.status(500).json({ error: 'Internal server error' });
-  }
-};
+});

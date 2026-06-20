@@ -1,5 +1,7 @@
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
+import { asyncHandler } from '../../utils/asyncHandler';
+import { requireBranchAccess } from '../../utils/security.utils';
 
 const prisma = new PrismaClient();
 
@@ -18,21 +20,17 @@ const generateTrnNo = async () => {
   return `TRN${nextNo}`;
 };
 
-export const createCollection = async (req: Request, res: Response): Promise<any> => {
-  try {
+export const createCollection = asyncHandler(async (req: Request, res: Response) => {
     const { loanId, staffId, amount, penalty, trnDate, remarks, trnMode } = req.body;
 
     // Security check
     const user = (req as any).user;
-    if (user?.role?.name !== 'Admin' && user?.branchId) {
-      const loan = await prisma.loan.findUnique({ where: { id: loanId }, include: { customer: { include: { area: true } } } });
-      if (!loan || loan.customer?.area?.branchId !== user.branchId) {
-        return res.status(403).json({ error: 'Security Violation: Cannot create a collection for a loan outside your branch.' });
-      }
-    }
+    const loan = await prisma.loan.findUnique({ where: { id: loanId }, include: { customer: { include: { area: true } } } });
+    if (!loan) throw new Error('Loan not found');
+    requireBranchAccess(user, loan.customer?.area?.branchId, 'create a collection for a loan outside your branch');
 
     if (!loanId || !amount) {
-      return res.status(400).json({ error: 'Loan ID and Amount are required' });
+      throw new Error('Loan ID and Amount are required');
     }
 
     const trnNumber = await generateTrnNo();
@@ -123,14 +121,9 @@ export const createCollection = async (req: Request, res: Response): Promise<any
     });
 
     res.status(201).json(result);
-  } catch (error: any) {
-    console.error('Create Collection Error:', error);
-    res.status(500).json({ error: error.message || 'Failed to process collection' });
-  }
-};
+});
 
-export const getCollections = async (req: Request, res: Response) => {
-  try {
+export const getCollections = asyncHandler(async (req: Request, res: Response) => {
     const { loanId, staffId, branchId } = req.query;
     const where: any = {};
     if (loanId) where.loanId = String(loanId);
@@ -159,7 +152,4 @@ export const getCollections = async (req: Request, res: Response) => {
     });
     
     res.json(collections);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch collections' });
-  }
-};
+});

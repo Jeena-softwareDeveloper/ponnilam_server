@@ -1,1 +1,0 @@
-import { PrismaClient } from '@prisma/client'; const prisma = new PrismaClient(); async function run() { const staff = await prisma.staff.findUnique({ where: { username: 'erode' }, include: { role: true } }); console.log(JSON.stringify(staff?.role, null, 2)); } run();
