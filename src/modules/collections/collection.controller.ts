@@ -32,7 +32,7 @@ export const createCollection = asyncHandler(async (req: Request, res: Response)
     if (!loan) throw new Error('Loan not found');
     requireBranchAccess(user, loan.customer?.area?.branchId, 'create a collection for a loan outside your branch');
 
-    // FIX: Prevent duplicate collection for same loan on same date with same amount
+    // FIX: Prevent duplicate collection for same loan on same date
     const collectionDate = new Date(trnDate);
     const dayStart = new Date(collectionDate.setHours(0, 0, 0, 0));
     const dayEnd = new Date(collectionDate.setHours(23, 59, 59, 999));
@@ -40,14 +40,13 @@ export const createCollection = asyncHandler(async (req: Request, res: Response)
     const existingCollection = await prisma.collection.findFirst({
       where: {
         loanId,
-        amount: Number(amount),
         trnDate: { gte: dayStart, lte: dayEnd }
       }
     });
     
     if (existingCollection) {
       return res.status(409).json({ 
-        error: `A collection of ₹${amount} already exists for this loan on ${new Date(trnDate).toLocaleDateString()}. Duplicate collections are not allowed.` 
+        error: `A collection already exists for this loan on ${new Date(trnDate).toLocaleDateString()}. Only one entry per day is allowed.` 
       });
     }
 
@@ -184,7 +183,7 @@ export const createCollection = asyncHandler(async (req: Request, res: Response)
 });
 
 export const getCollections = asyncHandler(async (req: Request, res: Response) => {
-    const { loanId, staffId, branchId } = req.query;
+    const { loanId, staffId, branchId, centerId, trnDate, areaId, fromDate, toDate } = req.query;
     const where: any = {};
     if (loanId) where.loanId = String(loanId);
     if (staffId) where.staffId = String(staffId);
@@ -198,6 +197,37 @@ export const getCollections = asyncHandler(async (req: Request, res: Response) =
       where.loan = { customer: { area: { branchId: userBranchId } } };
     } else if (branchId && branchId !== 'all') {
       where.loan = { customer: { area: { branchId: String(branchId) } } };
+    }
+
+    if (centerId) {
+      if (!where.loan) where.loan = { customer: {} };
+      if (!where.loan.customer) where.loan.customer = {};
+      where.loan.customer.centerId = String(centerId);
+    }
+
+    if (areaId) {
+      if (!where.loan) where.loan = { customer: {} };
+      if (!where.loan.customer) where.loan.customer = {};
+      where.loan.customer.areaId = String(areaId);
+    }
+
+    if (trnDate) {
+      const collectionDate = new Date(String(trnDate));
+      const dayStart = new Date(collectionDate.setHours(0, 0, 0, 0));
+      const dayEnd = new Date(collectionDate.setHours(23, 59, 59, 999));
+      where.trnDate = { gte: dayStart, lte: dayEnd };
+    } else if (fromDate || toDate) {
+      where.trnDate = {};
+      if (fromDate) {
+        const start = new Date(String(fromDate));
+        start.setHours(0, 0, 0, 0);
+        where.trnDate.gte = start;
+      }
+      if (toDate) {
+        const end = new Date(String(toDate));
+        end.setHours(23, 59, 59, 999);
+        where.trnDate.lte = end;
+      }
     }
 
     const collections = await prisma.collection.findMany({

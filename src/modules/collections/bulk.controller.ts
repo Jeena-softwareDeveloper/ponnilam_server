@@ -33,6 +33,23 @@ export const processBulkCollection = async (req: Request, res: Response): Promis
 
         if (entryAmount <= 0) continue;
 
+        // Skip if a collection already exists for this loan on the same date
+        const collectionDate = new Date(trnDate);
+        const dayStart = new Date(collectionDate.setHours(0, 0, 0, 0));
+        const dayEnd = new Date(collectionDate.setHours(23, 59, 59, 999));
+        
+        const existingCollection = await tx.collection.findFirst({
+          where: {
+            loanId,
+            trnDate: { gte: dayStart, lte: dayEnd }
+          }
+        });
+        
+        if (existingCollection) {
+          console.warn(`Skipping duplicate collection for loan ${loanId} on ${trnDate}`);
+          continue;
+        }
+
         // Security / Data check
         const loan = await tx.loan.findUnique({
           where: { id: loanId },
@@ -74,10 +91,11 @@ export const processBulkCollection = async (req: Request, res: Response): Promis
         for (const schedule of loan.schedules) {
           if (remainingCollectionAmount <= 0) break;
 
-          if (remainingCollectionAmount >= schedule.emiAmount) {
+          const remainingEmiAmount = schedule.emiAmount - (schedule.amountPaid || 0);
+
+          if (remainingCollectionAmount >= remainingEmiAmount) {
             // Full payment for this schedule
-            const paidAmount = schedule.emiAmount - schedule.amountPaid;
-            remainingCollectionAmount -= paidAmount;
+            remainingCollectionAmount -= remainingEmiAmount;
             scheduleUpdatePromises.push(
               tx.loanSchedule.update({
                 where: { id: schedule.id },

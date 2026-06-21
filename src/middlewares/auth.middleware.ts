@@ -53,14 +53,18 @@ export const branchScope = async (req: AuthRequest, res: Response, next: NextFun
 
     // ─── Force branchId / areaId on query and body ───────────────────────────
     if (req.user?.branchId) {
+      if (!req.query) (req as any).query = {};
       req.query.branchId = req.user.branchId;
       if (req.method === 'POST' || req.method === 'PUT') {
+        if (!req.body) (req as any).body = {};
         req.body.branchId = req.user.branchId;
       }
     }
     if (req.user?.areaId) {
+      if (!req.query) (req as any).query = {};
       req.query.areaId = req.user.areaId;
       if (req.method === 'POST' || req.method === 'PUT') {
+        if (!req.body) (req as any).body = {};
         req.body.areaId = req.user.areaId;
       }
     }

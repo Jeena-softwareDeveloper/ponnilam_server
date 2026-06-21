@@ -23,7 +23,12 @@ const generateLoanNo = async (branchId?: string) => {
     return `${prefix}L0001`;
   }
 
-  const lastNo = parseInt(lastLoan.loanNumber.replace(prefix, ''), 10);
+  const lastNoStr = lastLoan.loanNumber.replace(prefix + 'L', '');
+  let lastNo = parseInt(lastNoStr, 10);
+  if (isNaN(lastNo)) {
+    const match = lastLoan.loanNumber.match(/\d+$/);
+    lastNo = match ? parseInt(match[0], 10) : 0;
+  }
   const nextNo = (lastNo + 1).toString().padStart(4, '0');
   return `${prefix}L${nextNo}`;
 };
@@ -129,11 +134,11 @@ export const createLoan = asyncHandler(async (req: Request, res: Response) => {
 
 export const updateLoanStatus = asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params;
-  const { status, remarks, sanctionDate } = req.body;
+  const { status, remarks, sanctionDate, disbursementDate } = req.body;
 
   const existingLoan = await prisma.loan.findUnique({
     where: { id: id as string },
-    include: { customer: { include: { area: true } } }
+    include: { customer: { include: { area: true } }, package: true }
   }) as any;
   if (!existingLoan) throw new Error('Loan not found');
 
@@ -158,11 +163,40 @@ export const updateLoanStatus = asyncHandler(async (req: Request, res: Response)
   const loan = await prisma.$transaction(async (tx) => {
     const updatedLoan = await tx.loan.update({
       where: { id: String(id) },
-      data: { status, ...(remarks !== undefined && { remarks }), ...(sanctionDate && { sanctionDate: new Date(sanctionDate) }) }
+      data: { status, ...(remarks !== undefined && { remarks }), ...(sanctionDate && { sanctionDate: new Date(sanctionDate) }), ...(disbursementDate && { disbursementDate: new Date(disbursementDate) }) }
     });
 
-    // When a loan is first approved, write disbursement ledger entries
+    // When a loan is first approved, write disbursement ledger entries and regenerate schedules based on the exact Sanction Date
     if (status === 'APPROVED' && existingLoan.status !== 'APPROVED') {
+      const finalSanctionDate = sanctionDate ? new Date(sanctionDate) : (updatedLoan.sanctionDate || updatedLoan.createdAt);
+      const packageFrequency = existingLoan.package?.frequency?.toUpperCase() || 'WEEKLY';
+      
+      // Recreate schedules accurately based on the new Sanction Date
+      await tx.loanSchedule.deleteMany({ where: { loanId: existingLoan.id } });
+      
+      if (updatedLoan.noOfDues > 0 && updatedLoan.perDueAmount > 0) {
+        const schedules = [];
+        let currentDate = new Date(finalSanctionDate);
+        
+        for (let i = 0; i < updatedLoan.noOfDues; i++) {
+          schedules.push({
+            loanId: updatedLoan.id,
+            dueDate: new Date(currentDate),
+            emiAmount: updatedLoan.perDueAmount,
+            status: 'PENDING'
+          });
+
+          if (packageFrequency === 'WEEKLY') {
+            currentDate.setDate(currentDate.getDate() + 7);
+          } else if (packageFrequency === 'DAILY') {
+            currentDate.setDate(currentDate.getDate() + 1);
+          } else {
+            currentDate.setMonth(currentDate.getMonth() + 1);
+          }
+        }
+        await tx.loanSchedule.createMany({ data: schedules });
+      }
+
       const disbursedAmount = existingLoan.netDisbursement || existingLoan.amount || 0;
 
       // CustomerLedger disbursement entry
@@ -181,7 +215,7 @@ export const updateLoanStatus = asyncHandler(async (req: Request, res: Response)
           closingBalance: custClosing,
           remarks: `Loan ${existingLoan.loanNumber} disbursement`,
           customerId: existingLoan.customerId,
-          date: existingLoan.disbursementDate || new Date(),
+          date: updatedLoan.disbursementDate || new Date(),
         }
       });
 
@@ -201,7 +235,7 @@ export const updateLoanStatus = asyncHandler(async (req: Request, res: Response)
           closingBalance: loanClosing,
           remarks: `Loan ${existingLoan.loanNumber} approved`,
           loanId: existingLoan.id,
-          date: existingLoan.disbursementDate || new Date(),
+          date: updatedLoan.disbursementDate || new Date(),
         }
       });
     }
@@ -216,7 +250,10 @@ export const getLoans = asyncHandler(async (req: Request, res: Response) => {
   const { customerId, status, branchId, centerId } = req.query;
   const where: any = {};
   if (customerId) where.customerId = String(customerId);
-  if (status) where.status = String(status);
+  if (status) {
+    const statuses = String(status).split(',').map(s => s.trim());
+    where.status = statuses.length > 1 ? { in: statuses } : statuses[0];
+  }
 
   // FIX #6: Support centerId filter for bulk collection page performance
   if (centerId) {
@@ -240,6 +277,13 @@ export const getLoans = asyncHandler(async (req: Request, res: Response) => {
     include: {
       customer: { include: { area: { include: { branch: true } }, center: true } },
       staff: true,
+      schedules: {
+        orderBy: { dueDate: 'asc' }
+      },
+      collections: {
+        take: 5,
+        orderBy: { trnDate: 'desc' }
+      }
     },
     orderBy: { createdAt: 'desc' }
   });
@@ -251,7 +295,7 @@ export const getLoanById = asyncHandler(async (req: Request, res: Response) => {
   const loan = await prisma.loan.findUnique({
     where: { id: String(id) },
     include: {
-      customer: { include: { center: true, area: { include: { branch: true } } } },
+      customer: { include: { center: true, area: { include: { branch: true } }, kyc: true, bank: true, coApplicant: true } },
       staff: true,
       package: true,
       guarantors: true, // FIX #18: include guarantors
