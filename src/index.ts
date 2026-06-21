@@ -28,10 +28,25 @@ import { errorHandler } from './middlewares/error.middleware';
 
 dotenv.config();
 
+// Fail fast if JWT_SECRET is not set in production
+if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
+  console.error('FATAL: JWT_SECRET environment variable is not set. Refusing to start.');
+  process.exit(1);
+} else if (!process.env.JWT_SECRET) {
+  console.warn('WARNING: JWT_SECRET is not set. Using an insecure fallback. Set JWT_SECRET in .env before deploying.');
+}
+
 const app = express();
 const port = process.env.PORT || 5000;
 
-app.use(cors());
+app.use(cors({
+  origin: process.env.NODE_ENV === 'production' 
+    ? process.env.ALLOWED_ORIGINS?.split(',') || ['https://ponnilamfinance.com']
+    : ['http://localhost:3000', 'http://localhost:3001'],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-User-Role', 'X-User-Branch-Id']
+}));
 app.use(express.json());
 
 // Main Routes Setup
@@ -65,6 +80,11 @@ app.use('/api/v1/collections', authenticateToken, branchScope, auditMiddleware('
 app.use('/api/v1/reports', authenticateToken, branchScope, auditMiddleware('Report'), reportRoutes);
 app.use('/api/v1/dashboard', authenticateToken, branchScope, dashboardRoutes);
 app.use('/api/v1/notifications', authenticateToken, notificationRoutes);
+
+// Health check
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: Date.now(), service: 'NBFC API' });
+});
 
 // Base route
 app.get('/', (req, res) => {

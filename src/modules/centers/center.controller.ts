@@ -1,7 +1,5 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import prisma from '../../utils/prisma';
 
 // Generate Center Code (e.g., SAT001 from "Sattur" center name)
 const generateCenterCode = async (name: string) => {

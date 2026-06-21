@@ -1,9 +1,8 @@
+import prisma from '../../utils/prisma';
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { requireBranchAccess } from '../../utils/security.utils';
 
-const prisma = new PrismaClient();
 
 // Generate Customer Number with branch prefix (e.g., PON001 for branch "Ponnilam")
 const generateCustomerNo = async (branchId?: string) => {
@@ -14,17 +13,23 @@ const generateCustomerNo = async (branchId?: string) => {
       prefix = branch.name.trim().replace(/[^a-zA-Z]/g, '').substring(0, 3).toUpperCase();
     }
   }
-  // Find last customer with this prefix to get next sequential number
-  const existing = await prisma.customer.findMany({
-    where: { customerNo: { startsWith: prefix } },
-    orderBy: { customerNo: 'desc' },
+  
+  // FIX: Use transaction with lock to prevent race condition
+  const customerNo = await prisma.$transaction(async (tx) => {
+    const existing = await tx.customer.findMany({
+      where: { customerNo: { startsWith: prefix } },
+      orderBy: { customerNo: 'desc' },
+      take: 1,
+    });
+    let nextNo = 1;
+    if (existing.length > 0 && existing[0].customerNo) {
+      const lastNum = parseInt(existing[0].customerNo.replace(prefix, ''), 10);
+      if (!isNaN(lastNum)) nextNo = lastNum + 1;
+    }
+    return `${prefix}${nextNo.toString().padStart(3, '0')}`;
   });
-  let nextNo = 1;
-  if (existing.length > 0 && existing[0].customerNo) {
-    const lastNum = parseInt(existing[0].customerNo.replace(prefix, ''), 10);
-    if (!isNaN(lastNum)) nextNo = lastNum + 1;
-  }
-  return `${prefix}${nextNo.toString().padStart(3, '0')}`;
+  
+  return customerNo;
 };
 
 export const createCustomer = asyncHandler(async (req: Request, res: Response) => {
@@ -35,6 +40,13 @@ export const createCustomer = asyncHandler(async (req: Request, res: Response) =
       bank,
       others
     } = req.body;
+
+    if (!general?.name) {
+      return res.status(400).json({ error: 'Customer name is required' });
+    }
+    if (!general?.mobile) {
+      return res.status(400).json({ error: 'Customer mobile number is required' });
+    }
 
     if (kyc?.idProof1No) {
       const existing1 = await prisma.customerKyc.findFirst({
@@ -304,7 +316,7 @@ export const updateCustomer = asyncHandler(async (req: Request, res: Response) =
 });
 
 export const getCustomers = asyncHandler(async (req: Request, res: Response) => {
-    const { search, areaId, centerId, branchId } = req.query;
+    const { search, areaId, centerId, branchId, withoutActiveLoan } = req.query;
 
     const where: any = {};
     
@@ -331,6 +343,16 @@ export const getCustomers = asyncHandler(async (req: Request, res: Response) => 
 
     if (centerId) {
       where.centerId = String(centerId);
+    }
+
+    if (withoutActiveLoan === 'true') {
+      where.loans = {
+        none: {
+          status: {
+            in: ['PENDING', 'APPROVED', 'ACTIVE']
+          }
+        }
+      };
     }
 
     const customers = await prisma.customer.findMany({
@@ -408,6 +430,28 @@ export const getCustomerLedger = asyncHandler(async (req: Request, res: Response
 
 export const deleteCustomer = asyncHandler(async (req: Request, res: Response) => {
     const { id } = req.params;
+    
+    // FIX: Prevent deletion of customers with active loans or outstanding balance
+    const customer = await prisma.customer.findUnique({
+      where: { id: String(id) },
+      include: {
+        loans: {
+          where: { status: { in: ['ACTIVE', 'APPROVED', 'PENDING'] } }
+        }
+      }
+    });
+    
+    if (!customer) {
+      return res.status(404).json({ error: 'Customer not found' });
+    }
+    
+    const activeLoans = customer.loans.filter(l => l.outstandingAmount > 0);
+    if (activeLoans.length > 0) {
+      return res.status(400).json({ 
+        error: `Cannot delete customer. Customer has ${activeLoans.length} active loan(s) with outstanding balance. Please close or drop the loans first.` 
+      });
+    }
+    
     await prisma.customer.delete({ where: { id: String(id) } });
     res.json({ message: 'Customer deleted successfully' });
 });

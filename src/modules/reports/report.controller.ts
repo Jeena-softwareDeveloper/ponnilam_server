@@ -1,7 +1,5 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import prisma from '../../utils/prisma';
 
 // Helper: build date range
 const buildDateWhere = (startDate?: string, endDate?: string, type?: string) => {

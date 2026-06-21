@@ -1,14 +1,19 @@
+import prisma from '../../utils/prisma';
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
-
-const prisma = new PrismaClient();
 
 export const getBranches = async (req: Request, res: Response): Promise<any> => {
   try {
     const branches = await prisma.branch.findMany({
       orderBy: { code: 'asc' },
-      include: { state: true, district: true },
+      include: { 
+        state: true, 
+        district: true,
+        staffs: {
+          orderBy: { createdAt: 'asc' },
+          take: 1
+        }
+      },
     });
     return res.status(200).json(branches);
   } catch (error) {
@@ -110,26 +115,78 @@ export const createBranch = async (req: Request, res: Response): Promise<any> =>
 export const updateBranch = async (req: Request, res: Response): Promise<any> => {
   try {
     const id = String(req.params.id);
-    const { name, code, stateId, districtId, location, phone, isActive } = req.body;
-    const branch = await prisma.branch.update({
-      where: { id },
-      data: {
-        ...(name !== undefined && { name }),
-        ...(code !== undefined && { code }),
-        ...(stateId !== undefined && { stateId }),
-        ...(districtId !== undefined && { districtId }),
-        ...(location !== undefined && { location }),
-        ...(phone !== undefined && { phone }),
-        ...(isActive !== undefined && { isActive }),
-      },
+    const { name, code, stateId, districtId, location, phone, isActive, adminName, adminUsername, adminPhone, adminPassword, adminRoleId } = req.body;
+    
+    const branch = await prisma.$transaction(async (tx) => {
+      const updatedBranch = await tx.branch.update({
+        where: { id },
+        data: {
+          ...(name !== undefined && { name }),
+          ...(code !== undefined && { code }),
+          ...(stateId !== undefined && { stateId }),
+          ...(districtId !== undefined && { districtId }),
+          ...(location !== undefined && { location }),
+          ...(phone !== undefined && { phone }),
+          ...(isActive !== undefined && { isActive }),
+        },
+      });
+
+      // Handle updating the Branch Manager if details are provided
+      if (adminName && adminPhone) {
+        // Try to find the existing branch manager (usually the first staff created for the branch)
+        const existingStaff = await tx.staff.findFirst({
+          where: { branchId: id },
+          orderBy: { createdAt: 'asc' }
+        });
+
+        let roleId = adminRoleId;
+        if (!roleId) {
+          let role = await tx.role.findFirst({ where: { name: 'Branch Manager' } });
+          if (!role) role = await tx.role.create({ data: { name: 'Branch Manager' } });
+          roleId = role.id;
+        }
+
+        const dataToUpdate: any = {
+          name: adminName,
+          phone: adminPhone,
+          username: adminUsername || null,
+          roleId: roleId,
+        };
+
+        if (adminPassword) {
+          dataToUpdate.password = await bcrypt.hash(adminPassword, 10);
+        }
+
+        if (existingStaff) {
+          await tx.staff.update({
+            where: { id: existingStaff.id },
+            data: dataToUpdate
+          });
+        } else {
+          // If no staff existed, create one
+          if (!adminPassword) {
+            dataToUpdate.password = await bcrypt.hash('password123', 10);
+          }
+          dataToUpdate.branchId = id;
+          const newStaff = await tx.staff.create({ data: dataToUpdate });
+          const dashboardMenu = await tx.menu.findFirst({ where: { name: 'Dashboard' } });
+          if (dashboardMenu) {
+            await tx.staffMenu.create({ data: { staffId: newStaff.id, menuId: dashboardMenu.id } });
+          }
+        }
+      }
+      return updatedBranch;
     });
+
     return res.status(200).json(branch);
   } catch (error: any) {
     if (error.code === 'P2025') return res.status(404).json({ error: 'Branch not found' });
+    if (error.code === 'P2002') return res.status(409).json({ error: 'Admin phone or username already exists' });
     console.error('Error updating branch:', error);
     return res.status(500).json({ error: 'Internal server error' });
   }
 };
+
 export const deleteBranch = async (req: Request, res: Response): Promise<any> => {
   try {
     const id = String(req.params.id);

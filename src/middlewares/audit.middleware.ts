@@ -1,8 +1,7 @@
+import prisma from '../utils/prisma';
 import { Response, NextFunction } from 'express';
-import { PrismaClient } from '@prisma/client';
 import { AuthRequest } from './auth.middleware';
 
-const prisma = new PrismaClient();
 
 export const auditMiddleware = (entity: string) => {
   return async (req: AuthRequest, res: Response, next: NextFunction) => {

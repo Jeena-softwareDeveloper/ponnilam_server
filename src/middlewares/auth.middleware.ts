@@ -1,8 +1,7 @@
+import prisma from '../utils/prisma';
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import { PrismaClient } from '@prisma/client';
 
-const prisma = new PrismaClient();
 
 export interface AuthRequest extends Request {
   user?: any;
@@ -17,7 +16,11 @@ export const authenticateToken = async (req: AuthRequest, res: Response, next: N
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret') as any;
+    const jwtSecret = process.env.JWT_SECRET;
+    if (!jwtSecret) {
+      return res.status(500).json({ error: 'Server configuration error: JWT_SECRET not set' });
+    }
+    const decoded = jwt.verify(token, jwtSecret) as any;
 
 
     // Lookup staff in DB to get role and branch details
@@ -41,7 +44,7 @@ export const authenticateToken = async (req: AuthRequest, res: Response, next: N
     };
     next();
   } catch (error) {
-    return res.status(403).json({ error: 'Invalid token.' });
+    return res.status(401).json({ error: 'Invalid token.' });
   }
 };
 

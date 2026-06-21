@@ -1,9 +1,8 @@
+import prisma from '../../utils/prisma';
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { requireBranchAccess } from '../../utils/security.utils';
 
-const prisma = new PrismaClient();
 
 // Generate TRN Number
 const generateTrnNo = async () => {
@@ -23,14 +22,33 @@ const generateTrnNo = async () => {
 export const createCollection = asyncHandler(async (req: Request, res: Response) => {
     const { loanId, staffId, amount, penalty, trnDate, remarks, trnMode } = req.body;
 
+    if (!loanId || !amount) {
+      throw new Error('Loan ID and Amount are required');
+    }
+
     // Security check
     const user = (req as any).user;
     const loan = await prisma.loan.findUnique({ where: { id: loanId }, include: { customer: { include: { area: true } } } });
     if (!loan) throw new Error('Loan not found');
     requireBranchAccess(user, loan.customer?.area?.branchId, 'create a collection for a loan outside your branch');
 
-    if (!loanId || !amount) {
-      throw new Error('Loan ID and Amount are required');
+    // FIX: Prevent duplicate collection for same loan on same date with same amount
+    const collectionDate = new Date(trnDate);
+    const dayStart = new Date(collectionDate.setHours(0, 0, 0, 0));
+    const dayEnd = new Date(collectionDate.setHours(23, 59, 59, 999));
+    
+    const existingCollection = await prisma.collection.findFirst({
+      where: {
+        loanId,
+        amount: Number(amount),
+        trnDate: { gte: dayStart, lte: dayEnd }
+      }
+    });
+    
+    if (existingCollection) {
+      return res.status(409).json({ 
+        error: `A collection of ₹${amount} already exists for this loan on ${new Date(trnDate).toLocaleDateString()}. Duplicate collections are not allowed.` 
+      });
     }
 
     const trnNumber = await generateTrnNo();
@@ -115,6 +133,48 @@ export const createCollection = asyncHandler(async (req: Request, res: Response)
       await tx.loan.update({
         where: { id: loan.id },
         data: { outstandingAmount: newOutstanding, status: newStatus }
+      });
+
+      // 5. Write CustomerLedger entry
+      const lastCustomerLedger = await tx.customerLedger.findFirst({
+        where: { customerId: loan.customerId },
+        orderBy: { createdAt: 'desc' },
+      });
+      const customerOpeningBalance = lastCustomerLedger ? lastCustomerLedger.closingBalance : 0;
+      const customerClosingBalance = customerOpeningBalance - Number(amount);
+
+      await tx.customerLedger.create({
+        data: {
+          transactionType: 'Collection',
+          amount: Number(amount),
+          openingBalance: customerOpeningBalance,
+          closingBalance: customerClosingBalance,
+          remarks: remarks || null,
+          customerId: loan.customerId,
+          collectionId: collection.id,
+          date: new Date(trnDate),
+        }
+      });
+
+      // 6. Write LoanLedger entry
+      const lastLoanLedger = await tx.loanLedger.findFirst({
+        where: { loanId: loan.id },
+        orderBy: { createdAt: 'desc' },
+      });
+      const loanOpeningBalance = lastLoanLedger ? lastLoanLedger.closingBalance : loan.outstandingAmount;
+      const loanClosingBalance = newOutstanding;
+
+      await tx.loanLedger.create({
+        data: {
+          transactionType: 'EMI Collection',
+          amount: Number(amount),
+          openingBalance: loanOpeningBalance,
+          closingBalance: loanClosingBalance,
+          remarks: remarks || null,
+          loanId: loan.id,
+          collectionId: collection.id,
+          date: new Date(trnDate),
+        }
       });
 
       return collection;

@@ -1,8 +1,6 @@
+import prisma from '../../utils/prisma';
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
-
-const prisma = new PrismaClient();
 
 export const getStaffs = async (req: Request, res: Response): Promise<any> => {
   try {
@@ -136,9 +134,14 @@ export const getRequests = async (req: Request, res: Response): Promise<any> => 
 
 export const resolveResetRequest = async (req: Request, res: Response): Promise<any> => {
   try {
-    const staffId = String(req.params.id);
+    const logId = String(req.params.id);
 
-    const staff = await prisma.staff.findUnique({ where: { id: staffId } });
+    const requestLog = await prisma.auditLog.findUnique({ where: { id: logId } });
+    if (!requestLog || !requestLog.staffId) {
+      return res.status(404).json({ error: 'Reset request not found' });
+    }
+
+    const staff = await prisma.staff.findUnique({ where: { id: requestLog.staffId } });
     if (!staff) {
       return res.status(404).json({ error: 'Staff not found' });
     }
@@ -152,11 +155,11 @@ export const resolveResetRequest = async (req: Request, res: Response): Promise<
       data: { password: hashedPassword }
     });
 
-    await prisma.auditLog.create({
+    // Update the original log to resolved so it disappears from the pending list
+    await prisma.auditLog.update({
+      where: { id: logId },
       data: {
         action: 'PASSWORD_RESET_RESOLVED',
-        entity: 'Staff',
-        staffId: staff.id,
         details: `Password reset to default for ${staff.name}`
       }
     });
