@@ -70,6 +70,12 @@ async function main() {
     create: { name: 'Settings', path: '/admin/settings', icon: 'Settings' },
   });
 
+  await prisma.menu.upsert({
+    where: { name: 'Audit Logs' },
+    update: {},
+    create: { name: 'Audit Logs', path: '/admin/audit-logs', icon: 'Shield' },
+  });
+
   const mastersMenu = await prisma.menu.upsert({
     where: { name: 'Masters' },
     update: {},
