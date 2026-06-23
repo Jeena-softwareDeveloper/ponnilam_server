@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import prisma from '../../utils/prisma';
+import { LOAN_COLLECTIBLE_STATUSES, LoanStatus } from '../../utils/prisma-enums';
 
 // Generate Center Code (e.g., SAT001 from "Sattur" center name)
 const generateCenterCode = async (name: string) => {
@@ -56,11 +57,10 @@ export const getCenters = async (req: Request, res: Response): Promise<any> => {
       let pendingSetupCount = 0;
 
       center.customers.forEach(customer => {
-        const hasActiveLoan = customer.loans.some(l => l.status === 'ACTIVE');
-        if (hasActiveLoan) {
+        const hasOpenLoan = customer.loans.some(l => LOAN_COLLECTIBLE_STATUSES.includes(l.status as typeof LOAN_COLLECTIBLE_STATUSES[number]));
+        if (hasOpenLoan) {
           activeLoansCount++;
-        } else {
-          // No active loan means they are pending setup
+        } else if (!customer.loans.some(l => l.status === LoanStatus.PENDING)) {
           pendingSetupCount++;
         }
       });
@@ -71,7 +71,8 @@ export const getCenters = async (req: Request, res: Response): Promise<any> => {
         ...rest,
         activeLoansCount,
         pendingSetupCount,
-        mappedCustomersCount: customers.length
+        mappedCustomersCount: customers.filter((c) => c.centerMemberType !== 'IMPORT').length,
+        importCustomersCount: customers.filter((c) => c.centerMemberType === 'IMPORT').length,
       };
     });
 
@@ -114,11 +115,11 @@ export const getCenterById = async (req: Request, res: Response): Promise<any> =
     let totalOutstandingAmount = 0;
 
     center.customers.forEach(customer => {
-      const activeLoans = customer.loans.filter(l => l.status === 'ACTIVE');
-      if (activeLoans.length > 0) {
+      const openLoans = customer.loans.filter(l => LOAN_COLLECTIBLE_STATUSES.includes(l.status as typeof LOAN_COLLECTIBLE_STATUSES[number]));
+      if (openLoans.length > 0) {
         activeLoansCount++;
-        totalOutstandingAmount += activeLoans.reduce((sum, l) => sum + (l.outstandingAmount || 0), 0);
-      } else {
+        totalOutstandingAmount += openLoans.reduce((sum, l) => sum + (l.outstandingAmount || 0), 0);
+      } else if (!customer.loans.some(l => l.status === LoanStatus.PENDING)) {
         pendingSetupCount++;
       }
     });
@@ -131,7 +132,8 @@ export const getCenterById = async (req: Request, res: Response): Promise<any> =
       activeLoansCount,
       pendingSetupCount,
       totalOutstandingAmount,
-      totalMembers: customers.length
+      totalMembers: customers.filter((c) => c.centerMemberType !== 'IMPORT').length,
+      importCustomersCount: customers.filter((c) => c.centerMemberType === 'IMPORT').length,
     });
   } catch (error) {
     console.error('Error fetching center by id:', error);
@@ -155,6 +157,19 @@ export const createCenter = async (req: Request, res: Response): Promise<any> =>
 
     // Auto-generate center code from name (e.g. "Sattur" → SAT001)
     const generatedCode = await generateCenterCode(name);
+
+    if (employeeId) {
+      const employee = await prisma.staff.findUnique({
+        where: { id: employeeId },
+        include: { area: true },
+      });
+      const area = await prisma.area.findUnique({ where: { id: areaId } });
+      if (!employee) return res.status(400).json({ error: 'Invalid employee' });
+      const empBranch = employee.branchId || employee.area?.branchId;
+      if (area && empBranch && empBranch !== area.branchId) {
+        return res.status(400).json({ error: 'Employee does not belong to this center branch' });
+      }
+    }
 
     const center = await prisma.center.create({
       data: {
@@ -203,6 +218,20 @@ export const updateCenter = async (req: Request, res: Response): Promise<any> =>
       }
     }
 
+    const targetAreaId = areaId ?? existingCenter.areaId;
+    if (employeeId) {
+      const employee = await prisma.staff.findUnique({
+        where: { id: employeeId },
+        include: { area: true },
+      });
+      const area = await prisma.area.findUnique({ where: { id: targetAreaId } });
+      if (!employee) return res.status(400).json({ error: 'Invalid employee' });
+      const empBranch = employee.branchId || employee.area?.branchId;
+      if (area && empBranch && empBranch !== area.branchId) {
+        return res.status(400).json({ error: 'Employee does not belong to this center branch' });
+      }
+    }
+
     const center = await prisma.center.update({
       where: { id: String(id) },
       data: {
@@ -230,10 +259,9 @@ export const deleteCenter = async (req: Request, res: Response): Promise<any> =>
   try {
     const id = String(req.params.id);
 
-    // Security check
     const existingCenter = await prisma.center.findUnique({ where: { id }, include: { area: true } });
     if (!existingCenter) return res.status(404).json({ error: 'Center not found' });
-    
+
     const user = (req as any).user;
     if (user?.role?.name !== 'Admin' && user?.branchId) {
       if (existingCenter.area?.branchId !== user.branchId) {
@@ -250,6 +278,92 @@ export const deleteCenter = async (req: Request, res: Response): Promise<any> =>
       return res.status(400).json({ error: 'Cannot delete center because it has associated data' });
     }
     console.error('Error deleting center:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+/** Move selected customers to a new center for second-loan import (IMPORT type — not counted as members). */
+export const importCustomersToNewCenter = async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { sourceCenterId, newCenterName, customerIds, importCount } = req.body as {
+      sourceCenterId?: string;
+      newCenterName?: string;
+      customerIds?: string[];
+      importCount?: number;
+    };
+
+    if (!sourceCenterId || !newCenterName?.trim()) {
+      return res.status(400).json({ error: 'Source center and new center name are required' });
+    }
+
+    const sourceCenter = await prisma.center.findUnique({
+      where: { id: sourceCenterId },
+      include: {
+        area: true,
+        customers: {
+          where: { centerMemberType: { not: 'IMPORT' } },
+          include: { loans: { select: { status: true } } },
+        },
+      },
+    });
+
+    if (!sourceCenter) return res.status(404).json({ error: 'Source center not found' });
+
+    const user = (req as any).user;
+    if (user?.role?.name !== 'Admin' && user?.branchId) {
+      if (sourceCenter.area?.branchId !== user.branchId) {
+        return res.status(403).json({ error: 'Security Violation: Cannot import from a center outside your branch.' });
+      }
+    }
+
+    const eligible = sourceCenter.customers.filter((c) =>
+      !c.loans.some((l) => LOAN_COLLECTIBLE_STATUSES.includes(l.status as typeof LOAN_COLLECTIBLE_STATUSES[number]))
+    );
+
+    let idsToImport: string[] = [];
+    if (customerIds?.length) {
+      idsToImport = customerIds.filter((id) => eligible.some((c) => c.id === id));
+    } else if (importCount && importCount > 0) {
+      idsToImport = eligible.slice(0, importCount).map((c) => c.id);
+    }
+
+    if (idsToImport.length === 0) {
+      return res.status(400).json({ error: 'No eligible customers to import. Customers need a closed first loan or no active loan.' });
+    }
+
+    const generatedCode = await generateCenterCode(newCenterName.trim());
+
+    const result = await prisma.$transaction(async (tx) => {
+      const newCenter = await tx.center.create({
+        data: {
+          name: newCenterName.trim(),
+          code: generatedCode,
+          centerTime: sourceCenter.centerTime,
+          repaymentType: sourceCenter.repaymentType,
+          disbursMode: sourceCenter.disbursMode,
+          totalMembers: 0,
+          areaId: sourceCenter.areaId,
+          employeeId: sourceCenter.employeeId,
+        },
+        include: { employee: true, area: true },
+      });
+
+      await tx.customer.updateMany({
+        where: { id: { in: idsToImport } },
+        data: {
+          centerId: newCenter.id,
+          centerMemberType: 'IMPORT',
+          groupId: null,
+        },
+      });
+
+      return { newCenter, importedCount: idsToImport.length };
+    });
+
+    return res.status(201).json(result);
+  } catch (error: any) {
+    if (error.code === 'P2002') return res.status(409).json({ error: 'Center name or code already exists' });
+    console.error('Error importing customers to new center:', error);
     return res.status(500).json({ error: 'Internal server error' });
   }
 };

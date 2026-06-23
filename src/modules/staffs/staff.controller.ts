@@ -1,6 +1,7 @@
 import prisma from '../../utils/prisma';
 import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
+import { DEFAULT_RESET_PASSWORD } from '../../utils/auth.utils';
 
 export const getStaffs = async (req: Request, res: Response): Promise<any> => {
   try {
@@ -41,7 +42,18 @@ export const createStaff = async (req: Request, res: Response): Promise<any> => 
   try {
     const { name, username, phone, email, areaId, branchId, roleId, password } = req.body;
     if (!name || !phone) return res.status(400).json({ error: 'Name and phone are required' });
-    
+    if (!roleId) return res.status(400).json({ error: 'Role is required' });
+
+    if (areaId && branchId) {
+      const area = await prisma.area.findUnique({ where: { id: areaId } });
+      if (!area || area.branchId !== branchId) {
+        return res.status(400).json({ error: 'Area does not belong to the selected branch' });
+      }
+    } else if (areaId) {
+      const area = await prisma.area.findUnique({ where: { id: areaId } });
+      if (!area) return res.status(400).json({ error: 'Invalid area' });
+    }
+
     let hashedPassword = '';
     if (password) {
       hashedPassword = await bcrypt.hash(password, 10);
@@ -58,7 +70,7 @@ export const createStaff = async (req: Request, res: Response): Promise<any> => 
         email: email || null,
         areaId: areaId || null,
         branchId: branchId || null,
-        roleId: roleId || null,
+        roleId,
         password: hashedPassword,
       },
       include: { area: true, role: true, branch: true },
@@ -83,7 +95,7 @@ export const updateStaff = async (req: Request, res: Response): Promise<any> => 
       ...(email !== undefined && { email: email || null }),
       ...(areaId !== undefined && { areaId: areaId || null }),
       ...(branchId !== undefined && { branchId: branchId || null }),
-      ...(roleId !== undefined && { roleId: roleId || null }),
+      ...(roleId !== undefined && roleId && { roleId }),
       ...(isActive !== undefined && { isActive }),
     };
 
@@ -119,9 +131,13 @@ export const deleteStaff = async (req: Request, res: Response): Promise<any> => 
 
 export const getRequests = async (req: Request, res: Response): Promise<any> => {
   try {
-    // Fetch password reset requests from audit logs (Notification model not in schema yet)
+    const user = (req as any).user;
+    const where: any = { action: 'FORGOT_PASSWORD_REQUEST' };
+    if (user?.role?.name !== 'Admin' && user?.branchId) {
+      where.staff = { OR: [{ branchId: user.branchId }, { area: { branchId: user.branchId } }] };
+    }
     const logs = await prisma.auditLog.findMany({
-      where: { action: 'FORGOT_PASSWORD_REQUEST' },
+      where,
       orderBy: { createdAt: 'desc' },
       include: { staff: { select: { id: true, name: true, phone: true, username: true } } }
     });
@@ -146,9 +162,8 @@ export const resolveResetRequest = async (req: Request, res: Response): Promise<
       return res.status(404).json({ error: 'Staff not found' });
     }
 
-    // Reset password to username (or phone if no username)
-    const defaultPass = staff.username || staff.phone;
-    const hashedPassword = await bcrypt.hash(defaultPass, 10);
+    // Reset password to shared default
+    const hashedPassword = await bcrypt.hash(DEFAULT_RESET_PASSWORD, 10);
 
     await prisma.staff.update({
       where: { id: staff.id },

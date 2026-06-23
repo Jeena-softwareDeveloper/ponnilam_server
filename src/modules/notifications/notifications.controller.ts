@@ -1,25 +1,16 @@
 import prisma from '../../utils/prisma';
 import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
-
+import { NotificationType, NotificationStatus } from '../../utils/prisma-enums';
+import { DEFAULT_RESET_PASSWORD } from '../../utils/auth.utils';
+import { isAdminUser } from '../../utils/user.utils';
+import { getNotificationById, listNotifications } from '../../utils/notification.utils';
 
 export const getNotifications = async (req: Request, res: Response): Promise<any> => {
   try {
     const user = (req as any).user;
-    
-    let whereClause: any = {};
-    
-    // If not Admin, only show notifications for their branch
-    if (user?.role?.name !== 'Admin' && user?.branchId) {
-      whereClause = { branchId: user.branchId };
-    }
-
-    const notifications = await prisma.notification.findMany({
-      where: whereClause,
-      orderBy: { createdAt: 'desc' },
-      take: 50 // Limit to recent 50
-    });
-
+    const branchId = !isAdminUser(user) && user?.branchId ? user.branchId : null;
+    const notifications = await listNotifications(branchId);
     return res.status(200).json(notifications);
   } catch (error) {
     console.error('Get notifications error:', error);
@@ -30,13 +21,11 @@ export const getNotifications = async (req: Request, res: Response): Promise<any
 export const markAsRead = async (req: Request, res: Response): Promise<any> => {
   try {
     const { id } = req.params;
-    
-    // Security check optional here since it just marks read, but good practice
     const user = (req as any).user;
-    const notif = await prisma.notification.findUnique({ where: { id: id as string } });
+    const notif = await getNotificationById(id as string);
     if (!notif) return res.status(404).json({ error: 'Notification not found' });
-    
-    if (user?.role?.name !== 'Admin' && user?.branchId) {
+
+    if (!isAdminUser(user) && user?.branchId) {
       if (notif.branchId !== user.branchId) {
         return res.status(403).json({ error: 'Forbidden' });
       }
@@ -44,7 +33,7 @@ export const markAsRead = async (req: Request, res: Response): Promise<any> => {
 
     await prisma.notification.update({
       where: { id: id as string },
-      data: { isRead: true }
+      data: { isRead: true },
     });
 
     return res.status(200).json({ success: true });
@@ -59,44 +48,42 @@ export const approvePasswordReset = async (req: Request, res: Response): Promise
     const { id } = req.params;
     const user = (req as any).user;
 
-    const notif = await prisma.notification.findUnique({ where: { id: id as string } });
+    const notif = await getNotificationById(id as string);
     if (!notif) return res.status(404).json({ error: 'Notification not found' });
-    
-    if (user?.role?.name !== 'Admin' && user?.branchId) {
+
+    if (!isAdminUser(user) && user?.branchId) {
       if (notif.branchId !== user.branchId) {
         return res.status(403).json({ error: 'Forbidden' });
       }
     }
 
-    if (notif.type !== 'PASSWORD_RESET') {
+    if (notif.type !== NotificationType.PASSWORD_RESET) {
       return res.status(400).json({ error: 'Invalid notification type' });
     }
 
-    if (!notif.referenceId) {
+    if (!notif.staffId) {
       return res.status(400).json({ error: 'No staff reference found' });
     }
 
-    // Reset password to default 'password123'
-    const defaultPassword = 'password123';
-    const hashedPassword = await bcrypt.hash(defaultPassword, 10);
+    const hashedPassword = await bcrypt.hash(DEFAULT_RESET_PASSWORD, 10);
 
     await prisma.$transaction([
       prisma.staff.update({
-        where: { id: notif.referenceId },
-        data: { password: hashedPassword }
+        where: { id: notif.staffId },
+        data: { password: hashedPassword },
       }),
       prisma.notification.update({
         where: { id: id as string },
-        data: { status: 'APPROVED', isRead: true }
+        data: { status: NotificationStatus.APPROVED, isRead: true },
       }),
       prisma.auditLog.create({
         data: {
           action: 'PASSWORD_RESET_APPROVED',
           entity: 'Auth',
-          staffId: user.id, // The manager/admin who approved it
-          details: `Approved password reset for staff ${notif.referenceId}`
-        }
-      })
+          staffId: user.id,
+          details: `Approved password reset for staff ${notif.staffId}`,
+        },
+      }),
     ]);
 
     return res.status(200).json({ success: true, message: 'Password reset to default.' });
@@ -111,10 +98,10 @@ export const rejectPasswordReset = async (req: Request, res: Response): Promise<
     const { id } = req.params;
     const user = (req as any).user;
 
-    const notif = await prisma.notification.findUnique({ where: { id: id as string } });
+    const notif = await getNotificationById(id as string);
     if (!notif) return res.status(404).json({ error: 'Notification not found' });
-    
-    if (user?.role?.name !== 'Admin' && user?.branchId) {
+
+    if (!isAdminUser(user) && user?.branchId) {
       if (notif.branchId !== user.branchId) {
         return res.status(403).json({ error: 'Forbidden' });
       }
@@ -122,7 +109,7 @@ export const rejectPasswordReset = async (req: Request, res: Response): Promise<
 
     await prisma.notification.update({
       where: { id: id as string },
-      data: { status: 'REJECTED', isRead: true }
+      data: { status: NotificationStatus.REJECTED, isRead: true },
     });
 
     return res.status(200).json({ success: true });

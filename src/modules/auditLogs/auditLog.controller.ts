@@ -1,6 +1,7 @@
 import prisma from '../../utils/prisma';
 import { Request, Response } from 'express';
 import { asyncHandler } from '../../utils/asyncHandler';
+import { getDateRangeBounds, getDayRange } from '../../utils/date.utils';
 
 // GET /api/v1/audit-logs - full audit history
 export const getAuditLogs = asyncHandler(async (req: Request, res: Response) => {
@@ -20,13 +21,7 @@ export const getAuditLogs = asyncHandler(async (req: Request, res: Response) => 
   if (action) where.action = action;
   if (entity) where.entity = entity;
   if (startDate || endDate) {
-    where.createdAt = {};
-    if (startDate) where.createdAt.gte = new Date(startDate);
-    if (endDate) {
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
-      where.createdAt.lte = end;
-    }
+    where.createdAt = getDateRangeBounds(startDate, endDate);
   }
 
   const pageNum = parseInt(page) || 1;
@@ -61,8 +56,7 @@ export const getAuditLogs = asyncHandler(async (req: Request, res: Response) => 
 // GET /api/v1/audit-logs/active-sessions - who logged in today and hasn't logged out
 export const getActiveSessions = asyncHandler(async (req: Request, res: Response) => {
   // Get today's login logs
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
+  const { dayStart: todayStart } = getDayRange(new Date());
 
   const loginLogs = await prisma.auditLog.findMany({
     where: {
@@ -98,8 +92,7 @@ export const getActiveSessions = asyncHandler(async (req: Request, res: Response
 
 // GET /api/v1/audit-logs/stats
 export const getAuditStats = asyncHandler(async (req: Request, res: Response) => {
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
+  const { dayStart: todayStart } = getDayRange(new Date());
 
   const [totalToday, loginToday, createToday, updateToday, deleteToday, totalAll] = await Promise.all([
     prisma.auditLog.count({ where: { createdAt: { gte: todayStart } } }),

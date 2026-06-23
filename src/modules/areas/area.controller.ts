@@ -78,6 +78,7 @@ export const deleteArea = async (req: Request, res: Response): Promise<any> => {
     const user = (req as any).user;
     if (user?.role?.name !== 'Admin' && user?.branchId) {
       if (existingArea.branchId !== user.branchId) {
+        return res.status(403).json({ error: 'Cannot delete area outside your branch' });
       }
     }
 

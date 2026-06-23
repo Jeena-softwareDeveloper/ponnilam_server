@@ -2,6 +2,7 @@ import prisma from '../../utils/prisma';
 import { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
+import { NotificationType, NotificationStatus } from '../../utils/prisma-enums';
 import { asyncHandler } from '../../utils/asyncHandler';
 
 
@@ -205,13 +206,13 @@ export const forgotPassword = asyncHandler(async (req: Request, res: Response) =
   // Create a notification for Admins / Branch Managers
   await prisma.notification.create({
     data: {
-      type: 'PASSWORD_RESET',
+      type: NotificationType.PASSWORD_RESET,
       title: 'Password Reset Request',
       message: `${staff.name} (${staff.username || staff.phone}) requested a password reset.`,
-      referenceId: staff.id,
-      branchId: staff.branchId, // So Branch Manager can see it
-      status: 'PENDING'
-    }
+      staffId: staff.id,
+      branchId: staff.branchId,
+      status: NotificationStatus.PENDING,
+    },
   });
 
   await prisma.auditLog.create({

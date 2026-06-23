@@ -1,6 +1,7 @@
 import prisma from '../../utils/prisma';
 import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
+import { assignBranchManagerMenus } from '../../utils/branch-menus.utils';
 
 export const getBranches = async (req: Request, res: Response): Promise<any> => {
   try {
@@ -25,7 +26,7 @@ export const getBranches = async (req: Request, res: Response): Promise<any> => 
 export const getNextBranchCode = async (req: Request, res: Response): Promise<any> => {
   try {
     const lastBranch = await prisma.branch.findFirst({
-      orderBy: { createdAt: 'desc' },
+      orderBy: { code: 'desc' },
       where: { code: { startsWith: 'BR' } },
     });
 
@@ -48,6 +49,13 @@ export const createBranch = async (req: Request, res: Response): Promise<any> =>
   try {
     const { name, code, stateId, districtId, location, phone, adminName, adminUsername, adminPhone, adminPassword, adminRoleId } = req.body;
     if (!name || !code) return res.status(400).json({ error: 'Name and code are required' });
+
+    if (stateId && districtId) {
+      const district = await prisma.district.findUnique({ where: { id: districtId } });
+      if (!district || district.stateId !== stateId) {
+        return res.status(400).json({ error: 'District does not belong to the selected state' });
+      }
+    }
 
     // Handle creation in a transaction if admin is provided
     if (adminName && adminPhone) {
@@ -79,12 +87,7 @@ export const createBranch = async (req: Request, res: Response): Promise<any> =>
           }
         });
 
-        // Default: Assign Dashboard menu to Branch and the Admin
-        const dashboardMenu = await tx.menu.findFirst({ where: { name: 'Dashboard' } });
-        if (dashboardMenu) {
-          await tx.branchMenu.create({ data: { branchId: newBranch.id, menuId: dashboardMenu.id } });
-          await tx.staffMenu.create({ data: { staffId: newStaff.id, menuId: dashboardMenu.id } });
-        }
+        await assignBranchManagerMenus(tx, newBranch.id, newStaff.id);
 
         return newBranch;
       });
@@ -95,11 +98,7 @@ export const createBranch = async (req: Request, res: Response): Promise<any> =>
           data: { name, code, stateId: stateId || null, districtId: districtId || null, location: location || null, phone: phone || null },
         });
 
-        // Default: Assign Dashboard menu to Branch
-        const dashboardMenu = await tx.menu.findFirst({ where: { name: 'Dashboard' } });
-        if (dashboardMenu) {
-          await tx.branchMenu.create({ data: { branchId: newBranch.id, menuId: dashboardMenu.id } });
-        }
+        await assignBranchManagerMenus(tx, newBranch.id);
 
         return newBranch;
       });
@@ -118,6 +117,13 @@ export const updateBranch = async (req: Request, res: Response): Promise<any> =>
     const { name, code, stateId, districtId, location, phone, isActive, adminName, adminUsername, adminPhone, adminPassword, adminRoleId } = req.body;
     
     const branch = await prisma.$transaction(async (tx) => {
+      if (stateId && districtId) {
+        const district = await tx.district.findUnique({ where: { id: districtId } });
+        if (!district || district.stateId !== stateId) {
+          throw new Error('District does not belong to the selected state');
+        }
+      }
+
       const updatedBranch = await tx.branch.update({
         where: { id },
         data: {
@@ -133,10 +139,13 @@ export const updateBranch = async (req: Request, res: Response): Promise<any> =>
 
       // Handle updating the Branch Manager if details are provided
       if (adminName && adminPhone) {
-        // Try to find the existing branch manager (usually the first staff created for the branch)
+        const managerRole = await tx.role.findFirst({ where: { name: 'Branch Manager' } });
         const existingStaff = await tx.staff.findFirst({
-          where: { branchId: id },
-          orderBy: { createdAt: 'asc' }
+          where: {
+            branchId: id,
+            ...(managerRole ? { roleId: managerRole.id } : {}),
+          },
+          orderBy: { createdAt: 'asc' },
         });
 
         let roleId = adminRoleId;
@@ -169,10 +178,7 @@ export const updateBranch = async (req: Request, res: Response): Promise<any> =>
           }
           dataToUpdate.branchId = id;
           const newStaff = await tx.staff.create({ data: dataToUpdate });
-          const dashboardMenu = await tx.menu.findFirst({ where: { name: 'Dashboard' } });
-          if (dashboardMenu) {
-            await tx.staffMenu.create({ data: { staffId: newStaff.id, menuId: dashboardMenu.id } });
-          }
+          await assignBranchManagerMenus(tx, id, newStaff.id);
         }
       }
       return updatedBranch;

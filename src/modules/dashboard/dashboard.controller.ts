@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import prisma from '../../utils/prisma';
+import { LoanStatus, LOAN_COLLECTIBLE_STATUSES, UNPAID_SCHEDULE_STATUSES } from '../../utils/prisma-enums';
 
 // ─── Shared helpers ─────────────────────────────────────────────────────────
 
@@ -36,6 +37,7 @@ export const getDashboardKpis = async (req: Request, res: Response) => {
     const { whereCustomer, whereLoan, whereCollection } = buildWhere(areaId, activeBranchId);
     const { todayStart, todayEnd, yesterdayStart, lastMonthEnd } = dateBoundaries();
 
+    const openLoanStatuses = { in: LOAN_COLLECTIBLE_STATUSES };
     const [
       customersTotal, customersLastMonth,
       activeLoansTotal, activeLoansLastMonth,
@@ -45,16 +47,15 @@ export const getDashboardKpis = async (req: Request, res: Response) => {
     ] = await Promise.all([
       prisma.customer.count({ where: whereCustomer }),
       prisma.customer.count({ where: { ...whereCustomer, createdAt: { lte: lastMonthEnd } } }),
-      prisma.loan.count({ where: { ...whereLoan, status: 'ACTIVE' } }),
-      prisma.loan.count({ where: { ...whereLoan, status: 'ACTIVE', createdAt: { lte: lastMonthEnd } } }),
-      prisma.loan.aggregate({ where: { ...whereLoan, status: 'ACTIVE' }, _sum: { outstandingAmount: true } }),
-      prisma.loan.aggregate({ where: { ...whereLoan, status: 'ACTIVE', createdAt: { lte: lastMonthEnd } }, _sum: { outstandingAmount: true } }),
+      prisma.loan.count({ where: { ...whereLoan, status: { in: LOAN_COLLECTIBLE_STATUSES } } }),
+      prisma.loan.count({ where: { ...whereLoan, status: { in: LOAN_COLLECTIBLE_STATUSES }, createdAt: { lte: lastMonthEnd } } }),
+      prisma.loan.aggregate({ where: { ...whereLoan, status: openLoanStatuses }, _sum: { outstandingAmount: true } }),
+      prisma.loan.aggregate({ where: { ...whereLoan, status: openLoanStatuses, createdAt: { lte: lastMonthEnd } }, _sum: { outstandingAmount: true } }),
       prisma.collection.aggregate({ where: { ...whereCollection, trnDate: { gte: todayStart, lt: todayEnd } }, _sum: { amount: true } }),
       prisma.collection.aggregate({ where: { ...whereCollection, trnDate: { gte: yesterdayStart, lt: todayStart } }, _sum: { amount: true } }),
-      // Overdue: distinct loanIds with pending schedules before today
       prisma.loanSchedule.groupBy({
         by: ['loanId'],
-        where: { loan: whereLoan, status: 'PENDING', dueDate: { lt: todayStart } },
+        where: { loan: { ...whereLoan, status: openLoanStatuses }, status: { in: UNPAID_SCHEDULE_STATUSES }, dueDate: { lt: todayStart } },
         _count: { loanId: true }
       })
     ]);
@@ -120,11 +121,11 @@ export const getDashboardCharts = async (req: Request, res: Response) => {
     const { todayStart, thisMonthStart } = dateBoundaries();
 
     const [activeLoans, closedLoans, overdueGroups, branches] = await Promise.all([
-      prisma.loan.count({ where: { ...whereLoan, status: 'ACTIVE' } }),
-      prisma.loan.count({ where: { ...whereLoan, status: 'CLOSED' } }),
+      prisma.loan.count({ where: { ...whereLoan, status: LoanStatus.ACTIVE } }),
+      prisma.loan.count({ where: { ...whereLoan, status: LoanStatus.CLOSED } }),
       prisma.loanSchedule.groupBy({
         by: ['loanId'],
-        where: { loan: whereLoan, status: 'PENDING', dueDate: { lt: todayStart } },
+        where: { loan: { ...whereLoan, status: { in: LOAN_COLLECTIBLE_STATUSES } }, status: { in: UNPAID_SCHEDULE_STATUSES }, dueDate: { lt: todayStart } },
         _count: { loanId: true }
       }),
       prisma.branch.findMany({
@@ -134,10 +135,9 @@ export const getDashboardCharts = async (req: Request, res: Response) => {
     ]);
 
     const overdueCount = overdueGroups.length;
-    const strictActive = Math.max(0, activeLoans - overdueCount);
 
     const loanStatus = [
-      { name: 'Active Loans', value: strictActive, color: '#22c55e' },
+      { name: 'Active Loans', value: activeLoans, color: '#22c55e' },
       { name: 'Closed Loans', value: closedLoans, color: '#3b82f6' },
       { name: 'Overdue Loans', value: overdueCount, color: '#f59e0b' }
     ];
@@ -187,8 +187,8 @@ export const getDashboardActivity = async (req: Request, res: Response) => {
         take: 5
       }),
       prisma.loanSchedule.findMany({
-        where: { loan: whereLoan, status: 'PENDING', dueDate: { lt: todayStart } },
-        select: { loanId: true, dueDate: true, loan: { select: { outstandingAmount: true } } }
+        where: { loan: whereLoan, status: { in: UNPAID_SCHEDULE_STATUSES }, dueDate: { lt: todayStart } },
+        select: { loanId: true, dueDate: true, emiAmount: true, amountPaid: true, loan: { select: { outstandingAmount: true } } }
       })
     ]);
 
@@ -228,5 +228,3 @@ export const getDashboardActivity = async (req: Request, res: Response) => {
   }
 };
 
-// ─── Legacy combined endpoint (kept for backward compat) ─────────────────────
-export const getDashboardStats = getDashboardKpis;

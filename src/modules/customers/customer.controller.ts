@@ -2,6 +2,7 @@ import prisma from '../../utils/prisma';
 import { Request, Response } from 'express';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { requireBranchAccess } from '../../utils/security.utils';
+import { OPEN_LOAN_STATUSES } from '../../utils/prisma-enums';
 
 
 // Generate Customer Number with branch prefix (e.g., PON001 for branch "Ponnilam")
@@ -44,6 +45,9 @@ export const createCustomer = asyncHandler(async (req: Request, res: Response) =
     if (!general?.name) {
       return res.status(400).json({ error: 'Customer name is required' });
     }
+    if (!general?.areaId) {
+      return res.status(400).json({ error: 'Customer area is required' });
+    }
     if (!general?.mobile) {
       return res.status(400).json({ error: 'Customer mobile number is required' });
     }
@@ -60,6 +64,21 @@ export const createCustomer = asyncHandler(async (req: Request, res: Response) =
         where: { OR: [{ idProof1No: kyc.idProof2No }, { idProof2No: kyc.idProof2No }] }
       });
       if (existing2) return res.status(400).json({ error: `Customer with ID Proof Number ${kyc.idProof2No} already exists.` });
+    }
+
+    if (general?.centerId) {
+      const center = await prisma.center.findUnique({ where: { id: general.centerId } });
+      if (!center) return res.status(400).json({ error: 'Invalid center selected' });
+      if (general.areaId && center.areaId !== general.areaId) {
+        return res.status(400).json({ error: 'Center does not belong to the selected area' });
+      }
+    }
+    if (general?.groupId) {
+      const group = await prisma.group.findUnique({ where: { id: general.groupId }, include: { center: true } });
+      if (!group) return res.status(400).json({ error: 'Invalid group selected' });
+      if (general.centerId && group.centerId !== general.centerId) {
+        return res.status(400).json({ error: 'Group does not belong to the selected center' });
+      }
     }
 
     // Security Check: Enforce Branch Scoping
@@ -94,7 +113,7 @@ export const createCustomer = asyncHandler(async (req: Request, res: Response) =
         occupation: general.occupation,
         phone: general.phone,
         mobile: general.mobile,
-        areaId: general.areaId || null,
+        areaId: general.areaId,
         centerId: general.centerId || null,
         groupId: general.groupId || null,
         employeeId: general.employeeId || null,
@@ -349,7 +368,7 @@ export const getCustomers = asyncHandler(async (req: Request, res: Response) => 
       where.loans = {
         none: {
           status: {
-            in: ['PENDING', 'APPROVED', 'ACTIVE']
+            in: OPEN_LOAN_STATUSES
           }
         }
       };
@@ -411,13 +430,7 @@ export const getCustomerLedger = asyncHandler(async (req: Request, res: Response
       include: {
         area: true,
         employee: true,
-        loans: {
-          include: {
-            schedules: { orderBy: { dueDate: 'asc' } },
-            collections: { orderBy: { trnDate: 'desc' } }
-          },
-          orderBy: { createdAt: 'desc' }
-        }
+        center: true,
       }
     });
 
@@ -425,30 +438,52 @@ export const getCustomerLedger = asyncHandler(async (req: Request, res: Response
       throw new Error('Customer not found or unauthorized');
     }
 
-    res.json(customer);
+    const ledger = await prisma.customerLedger.findMany({
+      where: { customerId: customer.id },
+      include: {
+        collection: { select: { trnNumber: true, trnDate: true } },
+      },
+      orderBy: { date: 'asc' },
+    });
+
+    const loans = await prisma.loan.findMany({
+      where: { customerId: customer.id },
+      include: {
+        schedules: { orderBy: { dueDate: 'asc' } },
+        collections: { orderBy: { trnDate: 'desc' } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    res.json({ customer, ledger, loans });
 });
 
 export const deleteCustomer = asyncHandler(async (req: Request, res: Response) => {
     const { id } = req.params;
     
-    // FIX: Prevent deletion of customers with active loans or outstanding balance
     const customer = await prisma.customer.findUnique({
       where: { id: String(id) },
       include: {
-        loans: {
-          where: { status: { in: ['ACTIVE', 'APPROVED', 'PENDING'] } }
-        }
-      }
+        loans: { select: { id: true, loanNumber: true, status: true, outstandingAmount: true } },
+      },
     });
     
     if (!customer) {
       return res.status(404).json({ error: 'Customer not found' });
     }
-    
-    const activeLoans = customer.loans.filter(l => l.outstandingAmount > 0);
-    if (activeLoans.length > 0) {
-      return res.status(400).json({ 
-        error: `Cannot delete customer. Customer has ${activeLoans.length} active loan(s) with outstanding balance. Please close or drop the loans first.` 
+
+    const openLoans = customer.loans.filter(
+      (l) => l.outstandingAmount > 0 || OPEN_LOAN_STATUSES.includes(l.status as typeof OPEN_LOAN_STATUSES[number])
+    );
+    if (openLoans.length > 0) {
+      return res.status(400).json({
+        error: `Cannot delete customer. ${openLoans.length} open loan(s) exist. Close or drop them first.`,
+      });
+    }
+
+    if (customer.loans.length > 0) {
+      return res.status(400).json({
+        error: `Cannot delete customer with loan history (${customer.loans.length} loan record(s)). Deactivate the customer instead.`,
       });
     }
     
@@ -458,8 +493,18 @@ export const deleteCustomer = asyncHandler(async (req: Request, res: Response) =
 
 export const toggleCustomerStatus = asyncHandler(async (req: Request, res: Response) => {
     const { id } = req.params;
-    const customer = await prisma.customer.findUnique({ where: { id: String(id) } });
-    if (!customer) throw new Error('Customer not found');
+    const customer = await prisma.customer.findUnique({
+      where: { id: String(id) },
+      include: { area: true, loans: { where: { status: { in: OPEN_LOAN_STATUSES } } } },
+    });
+    if (!customer) return res.status(404).json({ error: 'Customer not found' });
+
+    const user = (req as any).user;
+    requireBranchAccess(user, customer.area?.branchId, 'update a customer outside your branch');
+
+    if (customer.isActive && customer.loans.length > 0) {
+      return res.status(400).json({ error: 'Cannot deactivate customer with open loans' });
+    }
 
     const updated = await prisma.customer.update({
       where: { id: String(id) },

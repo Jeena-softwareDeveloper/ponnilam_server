@@ -8,6 +8,12 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// Status values (SQLite has no native enums — enforced in app + prisma-enums.ts)
+// LoanStatus: PENDING | APPROVED | DROPPED | ACTIVE | CLOSED
+// ScheduleStatus: PENDING | PARTIAL | PAID
+// NotificationType: PASSWORD_RESET
+// NotificationStatus: PENDING | APPROVED | REJECTED
+
 // ==========================================
 // Masters
 // ==========================================
@@ -48,15 +54,14 @@ model Branch {
   phone    String?
   isActive Boolean @default(true)
 
-  stateId String?
-  state   State?  @relation(fields: [stateId], references: [id])
+  stateId    String
+  state      State    @relation(fields: [stateId], references: [id])
+  districtId String
+  district   District @relation(fields: [districtId], references: [id])
 
-  districtId String?
-  district   District? @relation(fields: [districtId], references: [id])
-
-  areas  Area[]
-  staffs Staff[]
-  menus  BranchMenu[]
+  areas         Area[]
+  staffs        Staff[]
+  menus         BranchMenu[]
   notifications Notification[]
 
   createdAt DateTime @default(now())
@@ -65,7 +70,7 @@ model Branch {
 
 model Area {
   id       String  @id @default(uuid())
-  name     String  @unique
+  name     String
   isActive Boolean @default(true)
 
   branchId String
@@ -77,12 +82,15 @@ model Area {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@unique([branchId, name])
+  @@index([branchId])
 }
 
 model Center {
   id            String  @id @default(uuid())
-  name          String  @unique
-  code          String? @unique // Optional now, since it wasn't requested, but good to have
+  name          String
+  code          String? @unique
   centerTime    String?
   repaymentType String  @default("WEEKLY")
   disbursMode   String  @default("CASH")
@@ -93,13 +101,17 @@ model Center {
   area   Area   @relation(fields: [areaId], references: [id])
 
   employeeId String?
-  employee   Staff?  @relation(fields: [employeeId], references: [id])
+  employee   Staff?  @relation(fields: [employeeId], references: [id], onDelete: SetNull)
 
-  groups Group[]
+  groups    Group[]
   customers Customer[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@unique([areaId, name])
+  @@index([areaId])
+  @@index([employeeId])
 }
 
 model Group {
@@ -133,11 +145,11 @@ model Role {
 
 model Menu {
   id       String  @id @default(uuid())
-  name     String  @unique // e.g. "Branches", "Staffs"
-  path     String? // e.g. "/admin/masters/branches"
+  name     String  @unique
+  path     String?
   icon     String?
   parentId String?
-  parent   Menu?   @relation("MenuToMenu", fields: [parentId], references: [id])
+  parent   Menu?   @relation("MenuToMenu", fields: [parentId], references: [id], onDelete: SetNull)
   children Menu[]  @relation("MenuToMenu")
 
   permissions       StaffMenu[]
@@ -153,7 +165,7 @@ model Staff {
   username String? @unique
   email    String? @unique
   phone    String  @unique
-  password String  @default("password123") // Default for now
+  password String
   isActive Boolean @default(true)
 
   branchId String?
@@ -162,18 +174,23 @@ model Staff {
   areaId String?
   area   Area?   @relation(fields: [areaId], references: [id])
 
-  roleId String?
-  role   Role?   @relation(fields: [roleId], references: [id])
+  roleId String
+  role   Role   @relation(fields: [roleId], references: [id])
 
-  menus       StaffMenu[]
-  loans       Loan[] // If a staff is linked to a loan process (optional)
-  centers     Center[] // Centers managed by this staff
-  customers   Customer[]
-  collections Collection[]
-  auditLogs   AuditLog[]
+  menus         StaffMenu[]
+  loans         Loan[]
+  centers       Center[]
+  customers     Customer[]
+  collections   Collection[]
+  auditLogs     AuditLog[]
+  notifications Notification[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([branchId])
+  @@index([areaId])
+  @@index([roleId])
 }
 
 model StaffMenu {
@@ -215,10 +232,10 @@ model LoanPackage {
   name         String  @unique
   interestRate Float
   durationDays Int
-  frequency    String  @default("DAILY") // "DAILY", "WEEKLY", "MONTHLY"
+  frequency    String  @default("DAILY")
   isActive     Boolean @default(true)
 
-  loans        Loan[]
+  loans Loan[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -229,60 +246,64 @@ model LoanPackage {
 // ==========================================
 
 model Customer {
-  id            String    @id @default(uuid())
-  customerNo    String    @unique // e.g. CUST0001
-  name          String
-  dob           DateTime?
-  placeOfBirth  String?
-  maritalStatus String?
-  address       String?
-  residenceType String?
+  id               String    @id @default(uuid())
+  customerNo       String    @unique
+  name             String
+  dob              DateTime?
+  placeOfBirth     String?
+  maritalStatus    String?
+  address          String?
+  residenceType    String?
   yearsInResidence Int?
-  occupation    String?
-  phone         String?
-  mobile        String?
+  occupation       String?
+  phone            String?
+  mobile           String
 
-  // Others Tab
   familyMembers Int       @default(0)
   fatherName    String?
   motherName    String?
   fatherDob     DateTime?
   motherDob     DateTime?
 
-  areaId String?
-  area   Area?   @relation(fields: [areaId], references: [id])
+  areaId String
+  area   Area   @relation(fields: [areaId], references: [id])
 
   employeeId String?
-  employee   Staff?  @relation(fields: [employeeId], references: [id])
+  employee   Staff?  @relation(fields: [employeeId], references: [id], onDelete: SetNull)
 
   centerId String?
-  center   Center? @relation(fields: [centerId], references: [id])
+  center   Center? @relation(fields: [centerId], references: [id], onDelete: SetNull)
+
+  centerMemberType String @default("MEMBER") // MEMBER | IMPORT (loan-only import, not counted in member total)
 
   groupId String?
-  group   Group?  @relation(fields: [groupId], references: [id])
+  group   Group?  @relation(fields: [groupId], references: [id], onDelete: SetNull)
 
-  coApplicant CustomerCoApplicant?
-  kyc         CustomerKyc?
-  bank        CustomerBank?
-  loans       Loan[]
+  coApplicant     CustomerCoApplicant?
+  kyc             CustomerKyc?
+  bank            CustomerBank?
+  loans           Loan[]
   customerLedgers CustomerLedger[]
 
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([areaId])
+  @@index([centerId])
+  @@index([mobile])
+  @@index([groupId])
 }
 
 model CustomerKyc {
-  id        String    @id @default(uuid())
+  id String @id @default(uuid())
 
-  // Primary ID (Proof 1)
   idProof1Type      String?
   idProof1No        String?
   idProof1Name      String?
   idProof1Dob       DateTime?
   idProof1IssueDate DateTime?
 
-  // Secondary ID (Proof 2)
   idProof2Type      String?
   idProof2No        String?
   idProof2Name      String?
@@ -330,35 +351,32 @@ model CustomerCoApplicant {
 // ==========================================
 
 model Loan {
-  id           String @id @default(uuid())
-  loanNumber   String @unique
-  amount       Float // Loan Amount
-  interestRate Float? // Optional interest rate
-  status       String @default("PENDING") // PENDING, APPROVED, DROPPED, ACTIVE, CLOSED
-  remarks      String? // Approver remarks
+  id           String     @id @default(uuid())
+  loanNumber   String     @unique
+  amount       Float
+  interestRate Float?
+  status       String @default("PENDING")
+  remarks      String?
 
   applicationDate DateTime?
   sanctionDate    DateTime?
-  
-  packageId String?
-  package   LoanPackage? @relation(fields: [packageId], references: [id])
 
-  // Loan Entry Details
+  packageId String
+  package   LoanPackage @relation(fields: [packageId], references: [id])
+
   noOfDues          Int   @default(0)
   perDueAmount      Float @default(0)
   totalDueAmount    Float @default(0)
   deductionAmount   Float @default(0)
   netDisbursement   Float @default(0)
-  outstandingAmount Float @default(0) // Live calculated outstanding
+  outstandingAmount Float @default(0)
 
-  // Income Analysis
   salary      Float @default(0)
   interest    Float @default(0)
   additional  Float @default(0)
   otherIncome Float @default(0)
   totalIncome Float @default(0)
 
-  // Expense Analysis
   food           Float @default(0)
   rent           Float @default(0)
   mobile         Float @default(0)
@@ -367,14 +385,11 @@ model Loan {
   otherExpense   Float @default(0)
   totalExpense   Float @default(0)
 
-  // System Calc
   eligibleEmi Float @default(0)
 
-  // Disbursement
   disbursementDate DateTime?
   firstDueDate     DateTime?
 
-  // Advance Balance Tracker
   advanceBalance Float @default(0)
 
   customerId String
@@ -390,24 +405,35 @@ model Loan {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([customerId])
+  @@index([status])
+  @@index([packageId])
+  @@index([staffId])
+  @@index([createdAt])
+  @@index([status, customerId])
 }
 
 model LoanSchedule {
-  id        String    @id @default(uuid())
-  dueDate   DateTime
-  emiAmount Float
-  amountPaid Float  @default(0)
-  status    String    @default("PENDING") // PENDING, PARTIAL, PAID
-  paidDate  DateTime?
+  id         String         @id @default(uuid())
+  dueDate    DateTime
+  emiAmount  Float
+  amountPaid Float          @default(0)
+  status     String @default("PENDING")
+  paidDate   DateTime?
 
   loanId String
   loan   Loan   @relation(fields: [loanId], references: [id], onDelete: Cascade)
 
   collectionId String?
-  collection   Collection? @relation(fields: [collectionId], references: [id])
+  collection   Collection? @relation(fields: [collectionId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([loanId, status])
+  @@index([dueDate, status])
+  @@index([collectionId])
 }
 
 model Collection {
@@ -420,15 +446,20 @@ model Collection {
   loanId String
   loan   Loan   @relation(fields: [loanId], references: [id])
 
-  staffId String?
-  staff   Staff?  @relation(fields: [staffId], references: [id])
+  staffId String
+  staff   Staff  @relation(fields: [staffId], references: [id])
 
-  schedules       LoanSchedule[] // Which schedules were paid by this collection
+  schedules       LoanSchedule[]
   customerLedgers CustomerLedger[]
   loanLedgers     LoanLedger[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([loanId])
+  @@index([trnDate])
+  @@index([staffId])
+  @@index([trnDate, loanId])
 }
 
 // ==========================================
@@ -438,39 +469,43 @@ model Collection {
 model CustomerLedger {
   id              String   @id @default(uuid())
   date            DateTime @default(now())
-  transactionType String   // "Collection", "Disbursement", "Refund"
+  transactionType String
   amount          Float
   openingBalance  Float
   closingBalance  Float
   remarks         String?
-  
-  customerId      String
-  customer        Customer @relation(fields: [customerId], references: [id])
-  
-  collectionId    String?
-  collection      Collection? @relation(fields: [collectionId], references: [id])
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  collectionId String?
+  collection   Collection? @relation(fields: [collectionId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([customerId, date])
 }
 
 model LoanLedger {
   id              String   @id @default(uuid())
   date            DateTime @default(now())
-  transactionType String   // "EMI Collection", "Penalty", "Disbursement"
+  transactionType String
   amount          Float
   openingBalance  Float
   closingBalance  Float
   remarks         String?
-  
-  loanId          String
-  loan            Loan     @relation(fields: [loanId], references: [id])
-  
-  collectionId    String?
-  collection      Collection? @relation(fields: [collectionId], references: [id])
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  loanId String
+  loan   Loan   @relation(fields: [loanId], references: [id], onDelete: Cascade)
+
+  collectionId String?
+  collection   Collection? @relation(fields: [collectionId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([loanId, date])
 }
 
 // ==========================================
@@ -479,31 +514,40 @@ model LoanLedger {
 
 model AuditLog {
   id       String  @id @default(uuid())
-  action   String // e.g. "CREATE", "UPDATE", "DELETE", "LOGIN"
-  entity   String // e.g. "Staff", "Branch", "Loan"
-  entityId String? // ID of the affected entity
-  details  String? // JSON string or text describing the changes
+  action   String
+  entity   String
+  entityId String?
+  details  String?
 
   staffId String?
-  staff   Staff?  @relation(fields: [staffId], references: [id])
+  staff   Staff?  @relation(fields: [staffId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([action, createdAt])
+  @@index([staffId])
 }
 
 model Notification {
-  id          String  @id @default(uuid())
-  type        String // e.g. "PASSWORD_RESET"
-  title       String
-  message     String
-  isRead      Boolean @default(false)
-  referenceId String? // e.g. Staff ID who requested it
-  status      String? // e.g. "PENDING", "APPROVED", "REJECTED"
+  id      String             @id @default(uuid())
+  type    String @default("PASSWORD_RESET")
+  title   String
+  message String
+  isRead  Boolean            @default(false)
+  status  String @default("PENDING")
 
-  branchId    String?
-  branch      Branch? @relation(fields: [branchId], references: [id])
+  staffId String?
+  staff   Staff?  @relation(fields: [staffId], references: [id], onDelete: SetNull)
+
+  branchId String?
+  branch   Branch? @relation(fields: [branchId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([branchId, isRead])
+  @@index([type, status])
 }
 
 model LoanGuarantor {
@@ -512,9 +556,9 @@ model LoanGuarantor {
   relationship String
   mobileNo     String
 
-  loanId       String
-  loan         Loan   @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  loanId String
+  loan   Loan   @relation(fields: [loanId], references: [id], onDelete: Cascade)
 
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

@@ -1,21 +1,21 @@
 import { Request, Response } from 'express';
 import prisma from '../../utils/prisma';
+import { LOAN_COLLECTIBLE_STATUSES, UNPAID_SCHEDULE_STATUSES } from '../../utils/prisma-enums';
+import { getDateRangeBounds, getDayRange } from '../../utils/date.utils';
 
 // Helper: build date range
 const buildDateWhere = (startDate?: string, endDate?: string, type?: string) => {
   if (startDate && endDate) {
-    return { gte: new Date(startDate), lte: new Date(new Date(endDate).setHours(23, 59, 59, 999)) };
+    return getDateRangeBounds(startDate, endDate);
   }
   if (type === 'DAILY') {
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    return { gte: today };
+    const { dayStart } = getDayRange(new Date());
+    return { gte: dayStart };
   }
-  if (type === 'MONTHLY') {
-    const start = new Date(); start.setDate(1); start.setHours(0, 0, 0, 0);
-    return { gte: start };
-  }
-  const start = new Date(); start.setDate(1); start.setHours(0, 0, 0, 0);
-  return { gte: start };
+  const start = new Date();
+  start.setDate(1);
+  const { dayStart } = getDayRange(start);
+  return { gte: dayStart };
 };
 
 // 1. Collection Report (existing - improved)
@@ -84,7 +84,7 @@ export const getCenterDetailReport = async (req: Request, res: Response) => {
         customers: {
           include: {
             loans: {
-              where: { status: { in: ['ACTIVE', 'APPROVED'] } },
+              where: { status: { in: LOAN_COLLECTIBLE_STATUSES } },
               select: { outstandingAmount: true, perDueAmount: true, status: true }
             }
           }
@@ -96,7 +96,10 @@ export const getCenterDetailReport = async (req: Request, res: Response) => {
     const enriched = centers.map(center => {
       const activeLoans = center.customers.flatMap(c => c.loans);
       const totalOutstanding = activeLoans.reduce((sum, l) => sum + l.outstandingAmount, 0);
-      const expectedCollection = activeLoans.reduce((sum, l) => sum + l.perDueAmount, 0);
+      const expectedCollection = activeLoans.reduce((sum, l) => {
+        const due = Math.min(l.outstandingAmount, l.perDueAmount);
+        return sum + due;
+      }, 0);
       return {
         ...center,
         totalMembers: center.customers.length,
@@ -137,7 +140,7 @@ export const getCenterCustomerReport = async (req: Request, res: Response) => {
         center: true,
         area: { include: { branch: true } },
         loans: {
-          where: { status: { in: ['ACTIVE', 'APPROVED'] } },
+          where: { status: { in: LOAN_COLLECTIBLE_STATUSES } },
           select: { 
             loanNumber: true, 
             outstandingAmount: true, 
@@ -145,7 +148,7 @@ export const getCenterCustomerReport = async (req: Request, res: Response) => {
             status: true, 
             amount: true,
             schedules: {
-              where: { status: { in: ['PENDING', 'PARTIAL'] }, dueDate: { lt: new Date() } },
+              where: { status: { in: UNPAID_SCHEDULE_STATUSES }, dueDate: { lt: new Date() } },
               select: { emiAmount: true, amountPaid: true }
             }
           }
@@ -222,7 +225,7 @@ export const getAreaDueReport = async (req: Request, res: Response) => {
     const user = (req as any).user;
     const userBranchId = user?.branchId;
 
-    const loanWhere: any = { status: { in: ['ACTIVE', 'APPROVED'] } };
+    const loanWhere: any = { status: { in: LOAN_COLLECTIBLE_STATUSES } };
     
     if (areaId) {
       if (userBranchId) {
@@ -246,7 +249,7 @@ export const getAreaDueReport = async (req: Request, res: Response) => {
           }
         },
         schedules: {
-          where: { status: { in: ['PENDING', 'PARTIAL'] }, dueDate: { lt: new Date() } }
+          where: { status: { in: UNPAID_SCHEDULE_STATUSES }, dueDate: { lt: new Date() } }
         }
       }
     });
@@ -266,7 +269,11 @@ export const getAreaDueReport = async (req: Request, res: Response) => {
       }
       const entry = areaMap.get(area.id)!;
       entry.totalLoans += 1;
-      entry.totalOutstanding += loan.outstandingAmount;
+      const scheduleOutstanding = loan.schedules.reduce(
+        (sum: number, s: any) => sum + (s.emiAmount - (s.amountPaid || 0)),
+        0
+      );
+      entry.totalOutstanding += scheduleOutstanding > 0 ? scheduleOutstanding : loan.outstandingAmount;
       if (loan.schedules.length > 0) {
         entry.overdueLoans += 1;
         entry.overdueAmount += loan.schedules.reduce((sum: number, s: any) => sum + (s.emiAmount - s.amountPaid), 0);
@@ -283,21 +290,52 @@ export const getAreaDueReport = async (req: Request, res: Response) => {
 // 6. Particular Party Amount Received Report
 export const getPartyAmountReport = async (req: Request, res: Response) => {
   try {
-    const { customerId, loanId, startDate, endDate, type } = req.query as Record<string, string>;
+    const { customerId, loanId, loanNumber, customerNo, startDate, endDate, type } = req.query as Record<string, string>;
     const user = (req as any).user;
     const userBranchId = user?.branchId;
+
+    const loanSearch = loanId || loanNumber;
+    const customerSearch = customerId || customerNo;
+
+    if (!loanSearch && !customerSearch) {
+      return res.status(400).json({ error: 'Loan number or customer number is required' });
+    }
+
+    let resolvedLoanId: string | undefined;
+    if (loanSearch) {
+      const loan = await prisma.loan.findFirst({
+        where: {
+          OR: [{ id: loanSearch }, { loanNumber: loanSearch }],
+        },
+        select: { id: true },
+      });
+      if (!loan) return res.status(404).json({ error: `Loan not found: ${loanSearch}` });
+      resolvedLoanId = loan.id;
+    }
+
+    let resolvedCustomerId: string | undefined;
+    if (customerSearch) {
+      const customer = await prisma.customer.findFirst({
+        where: {
+          OR: [{ id: customerSearch }, { customerNo: customerSearch }],
+        },
+        select: { id: true },
+      });
+      if (!customer) return res.status(404).json({ error: `Customer not found: ${customerSearch}` });
+      resolvedCustomerId = customer.id;
+    }
 
     const where: any = { trnDate: buildDateWhere(startDate, endDate, type) };
 
     if (userBranchId) {
-      where.loan = { 
+      where.loan = {
         customer: { area: { branchId: userBranchId } },
-        ...(customerId ? { customerId } : {})
+        ...(resolvedCustomerId ? { customerId: resolvedCustomerId } : {}),
       };
-      if (loanId) where.loanId = loanId;
+      if (resolvedLoanId) where.loanId = resolvedLoanId;
     } else {
-      if (loanId) where.loanId = loanId;
-      if (customerId) where.loan = { customerId };
+      if (resolvedLoanId) where.loanId = resolvedLoanId;
+      if (resolvedCustomerId) where.loan = { customerId: resolvedCustomerId };
     }
 
     const collections = await prisma.collection.findMany({

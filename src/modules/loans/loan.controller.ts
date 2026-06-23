@@ -2,26 +2,32 @@ import prisma from '../../utils/prisma';
 import { Request, Response } from 'express';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { requireBranchAccess } from '../../utils/security.utils';
+import { isAdminUser } from '../../utils/user.utils';
+import {
+  buildScheduleRows,
+  handleDroppedLoan,
+  handleManualLoanClose,
+  isValidLoanTransition,
+  resolveLastEmiAmount,
+} from '../../utils/loan.utils';
+import { LoanStatus, OPEN_LOAN_STATUSES } from '../../utils/prisma-enums';
 
-
-// Generate Loan Number with branch prefix (e.g., PON-L0001)
-const generateLoanNo = async (branchId?: string) => {
+const generateLoanNo = async (branchId?: string, tx?: any) => {
+  const db = tx || prisma;
   let prefix = 'L';
   if (branchId) {
-    const branch = await prisma.branch.findUnique({ where: { id: branchId } });
+    const branch = await db.branch.findUnique({ where: { id: branchId } });
     if (branch?.name) {
       prefix = branch.name.trim().replace(/[^a-zA-Z]/g, '').substring(0, 3).toUpperCase() + '-';
     }
   }
-  
-  const lastLoan = await prisma.loan.findFirst({
+
+  const lastLoan = await db.loan.findFirst({
     where: { loanNumber: { startsWith: prefix } },
     orderBy: { loanNumber: 'desc' },
   });
 
-  if (!lastLoan || !lastLoan.loanNumber) {
-    return `${prefix}L0001`;
-  }
+  if (!lastLoan?.loanNumber) return `${prefix}L0001`;
 
   const lastNoStr = lastLoan.loanNumber.replace(prefix + 'L', '');
   let lastNo = parseInt(lastNoStr, 10);
@@ -29,8 +35,7 @@ const generateLoanNo = async (branchId?: string) => {
     const match = lastLoan.loanNumber.match(/\d+$/);
     lastNo = match ? parseInt(match[0], 10) : 0;
   }
-  const nextNo = (lastNo + 1).toString().padStart(4, '0');
-  return `${prefix}L${nextNo}`;
+  return `${prefix}L${(lastNo + 1).toString().padStart(4, '0')}`;
 };
 
 export const createLoan = asyncHandler(async (req: Request, res: Response) => {
@@ -41,93 +46,104 @@ export const createLoan = asyncHandler(async (req: Request, res: Response) => {
     food, rent, mobile, education, loanObligation, otherExpense, totalExpense,
     eligibleEmi,
     disbursementDate, firstDueDate,
-    packageId, applicationDate, remarks, status, guarantors
+    packageId, applicationDate, remarks, guarantors,
   } = req.body;
 
-  // Security check
   const user = (req as any).user;
-  const customer = await prisma.customer.findUnique({ where: { id: customerId }, include: { area: true } });
-  if (!customer) throw new Error('Customer not found');
+  const customer = await prisma.customer.findUnique({
+    where: { id: customerId },
+    include: { area: true, center: true },
+  });
+  if (!customer) return res.status(404).json({ error: 'Customer not found' });
+  if (!customer.isActive) return res.status(400).json({ error: 'Cannot create loan for inactive customer' });
   requireBranchAccess(user, customer.area?.branchId, 'create a loan for a customer outside your branch');
 
-    const loanNumber = await generateLoanNo(customer.area?.branchId || user?.branchId);
-
-  // FIX #10: Fetch package to get interestRate and frequency
-  let packageFrequency = 'MONTHLY';
-  let resolvedInterestRate = Number(req.body.interestRate || 0);
-  if (packageId) {
-    const pkg = await prisma.loanPackage.findUnique({ where: { id: packageId } });
-    if (pkg) {
-      packageFrequency = pkg.frequency;
-      if (!resolvedInterestRate) resolvedInterestRate = pkg.interestRate;
-    }
+  if (!packageId) {
+    return res.status(400).json({ error: 'Loan package is required' });
   }
 
-  const loan = await prisma.loan.create({
-    data: {
-      loanNumber,
-      customerId, staffId, amount: Number(amount),
-      interestRate: resolvedInterestRate, // FIX #10: save interestRate
-      noOfDues: Number(noOfDues), perDueAmount: Number(perDueAmount),
-      totalDueAmount: Number(totalDueAmount), deductionAmount: Number(deductionAmount),
-      netDisbursement: Number(netDisbursement), outstandingAmount: Number(totalDueAmount), // Initial outstanding is total due
-
-      salary: Number(salary || 0), interest: Number(interest || 0),
-      additional: Number(additional || 0), otherIncome: Number(otherIncome || 0),
-      totalIncome: Number(totalIncome || 0),
-
-      food: Number(food || 0), rent: Number(rent || 0), mobile: Number(mobile || 0),
-      education: Number(education || 0), loanObligation: Number(loanObligation || 0),
-      otherExpense: Number(otherExpense || 0), totalExpense: Number(totalExpense || 0),
-
-      eligibleEmi: Number(eligibleEmi || 0),
-
-
-      disbursementDate: disbursementDate ? new Date(disbursementDate) : null,
-      firstDueDate: firstDueDate ? new Date(firstDueDate) : null,
-      packageId: packageId || null,
-      applicationDate: applicationDate ? new Date(applicationDate) : null,
-      remarks: remarks || null,
-      status: status || 'PENDING',
-
-      ...(guarantors && guarantors.length > 0 && {
-        guarantors: {
-          create: guarantors.map((g: any) => ({
-            name: g.name,
-            relationship: g.relationship,
-            mobileNo: g.mobileNo
-          }))
-        }
-      })
-    }
+  const existingOpen = await prisma.loan.findFirst({
+    where: { customerId, status: { in: OPEN_LOAN_STATUSES } },
   });
+  if (existingOpen) {
+    return res.status(400).json({ error: `Customer already has an open loan (${existingOpen.loanNumber})` });
+  }
 
-  // FIX #2: Auto-generate EMIs using CORRECT frequency from package
-  if (loan.firstDueDate && loan.noOfDues > 0 && loan.perDueAmount > 0) {
-    const schedules = [];
-    let currentDate = new Date(loan.firstDueDate);
+  const numDues = Number(noOfDues);
+  const perDue = Number(perDueAmount);
+  const totalDue = Number(totalDueAmount);
+  if (Math.abs(totalDue - numDues * perDue) > 0.01) {
+    return res.status(400).json({ error: 'Total due amount must equal number of dues × per due amount' });
+  }
+  const net = Number(netDisbursement);
+  const deduct = Number(deductionAmount);
+  if (Math.abs(net - (Number(amount) - deduct)) > 0.01) {
+    return res.status(400).json({ error: 'Net disbursement must equal loan amount minus deduction' });
+  }
 
-    for (let i = 0; i < loan.noOfDues; i++) {
-      schedules.push({
-        loanId: loan.id,
-        dueDate: new Date(currentDate),
-        emiAmount: loan.perDueAmount,
-        status: 'PENDING'
+  const pkg = await prisma.loanPackage.findUnique({ where: { id: packageId } });
+  if (!pkg) return res.status(400).json({ error: 'Invalid loan package' });
+  if (!pkg.isActive) return res.status(400).json({ error: 'Selected loan package is inactive' });
+
+  let packageFrequency = pkg.frequency;
+  let resolvedInterestRate = Number(req.body.interestRate || pkg.interestRate);
+
+  const loan = await prisma.$transaction(async (tx) => {
+    const loanNumber = await generateLoanNo(customer.area?.branchId || user?.branchId, tx);
+
+    const created = await tx.loan.create({
+      data: {
+        loanNumber,
+        customerId,
+        staffId,
+        amount: Number(amount),
+        interestRate: resolvedInterestRate,
+        noOfDues: numDues,
+        perDueAmount: perDue,
+        totalDueAmount: totalDue,
+        deductionAmount: deduct,
+        netDisbursement: net,
+        outstandingAmount: totalDue,
+        salary: Number(salary || 0),
+        interest: Number(interest || 0),
+        additional: Number(additional || 0),
+        otherIncome: Number(otherIncome || 0),
+        totalIncome: Number(totalIncome || 0),
+        food: Number(food || 0),
+        rent: Number(rent || 0),
+        mobile: Number(mobile || 0),
+        education: Number(education || 0),
+        loanObligation: Number(loanObligation || 0),
+        otherExpense: Number(otherExpense || 0),
+        totalExpense: Number(totalExpense || 0),
+        eligibleEmi: Number(eligibleEmi || 0),
+        disbursementDate: disbursementDate ? new Date(disbursementDate) : null,
+        firstDueDate: firstDueDate ? new Date(firstDueDate) : null,
+        packageId,
+        applicationDate: applicationDate ? new Date(applicationDate) : null,
+        remarks: remarks || null,
+        status: LoanStatus.PENDING,
+        ...(guarantors?.length > 0 && {
+          guarantors: {
+            create: guarantors.map((g: any) => ({
+              name: g.name,
+              relationship: g.relationship,
+              mobileNo: g.mobileNo,
+            })),
+          },
+        }),
+      },
+    });
+
+    if (created.firstDueDate && created.noOfDues > 0 && created.perDueAmount > 0) {
+      const lastEmi = resolveLastEmiAmount(created.totalDueAmount, created.perDueAmount, created.noOfDues);
+      await tx.loanSchedule.createMany({
+        data: buildScheduleRows(created.id, created.noOfDues, created.perDueAmount, created.firstDueDate, packageFrequency, lastEmi),
       });
-
-      // FIX #2: Use correct frequency for date increment
-      if (packageFrequency === 'WEEKLY') {
-        currentDate.setDate(currentDate.getDate() + 7);
-      } else if (packageFrequency === 'DAILY') {
-        currentDate.setDate(currentDate.getDate() + 1);
-      } else {
-        // MONTHLY (default)
-        currentDate.setMonth(currentDate.getMonth() + 1);
-      }
     }
 
-    await prisma.loanSchedule.createMany({ data: schedules });
-  }
+    return created;
+  });
 
   res.status(201).json(loan);
 });
@@ -137,106 +153,119 @@ export const updateLoanStatus = asyncHandler(async (req: Request, res: Response)
   const { status, remarks, sanctionDate, disbursementDate } = req.body;
 
   const existingLoan = await prisma.loan.findUnique({
-    where: { id: id as string },
-    include: { customer: { include: { area: true } }, package: true }
-  }) as any;
-  if (!existingLoan) throw new Error('Loan not found');
+    where: { id: String(id) },
+    include: { customer: { include: { area: true, center: true } }, package: true },
+  });
+  if (!existingLoan) return res.status(404).json({ error: 'Loan not found' });
 
   const user = (req as any).user;
   requireBranchAccess(user, existingLoan.customer?.area?.branchId, 'update a loan for a customer outside your branch');
 
-  // FIX: Only users with approval permission can change loan status to APPROVED or ACTIVE
-  const approvingStatuses = ['APPROVED', 'ACTIVE'];
-  if (approvingStatuses.includes(status) && existingLoan.status !== status) {
-    const staffMenu = await prisma.staffMenu.findFirst({
-      where: {
-        staffId: user.id,
-        menu: { path: '/admin/loans' }
-      }
-    });
+  if (!isValidLoanTransition(existingLoan.status, status)) {
+    return res.status(400).json({ error: `Cannot change loan status from ${existingLoan.status} to ${status}` });
+  }
 
-    if (!staffMenu) {
-      return res.status(403).json({ error: 'You do not have permission to approve loans. Contact administrator.' });
+  const approvingStatuses: LoanStatus[] = [LoanStatus.APPROVED, LoanStatus.ACTIVE];
+  if (approvingStatuses.includes(status as LoanStatus) && existingLoan.status !== status) {
+    if (!isAdminUser(user)) {
+      const staffMenu = await prisma.staffMenu.findFirst({
+        where: { staffId: user.id, menu: { path: '/admin/loans' } },
+      });
+      if (!staffMenu?.canEdit) {
+        return res.status(403).json({ error: 'You do not have permission to approve loans.' });
+      }
     }
   }
 
   const loan = await prisma.$transaction(async (tx) => {
     const updatedLoan = await tx.loan.update({
       where: { id: String(id) },
-      data: { status, ...(remarks !== undefined && { remarks }), ...(sanctionDate && { sanctionDate: new Date(sanctionDate) }), ...(disbursementDate && { disbursementDate: new Date(disbursementDate) }) }
+      data: {
+        status,
+        ...(remarks !== undefined && { remarks }),
+        ...(sanctionDate && { sanctionDate: new Date(sanctionDate) }),
+        ...(disbursementDate && { disbursementDate: new Date(disbursementDate) }),
+        ...(status === LoanStatus.APPROVED && !disbursementDate && { disbursementDate: new Date(sanctionDate || Date.now()) }),
+      },
     });
 
-    // When a loan is first approved, write disbursement ledger entries and regenerate schedules based on the exact Sanction Date
-    if (status === 'APPROVED' && existingLoan.status !== 'APPROVED') {
-      const finalSanctionDate = sanctionDate ? new Date(sanctionDate) : (updatedLoan.sanctionDate || updatedLoan.createdAt);
-      const packageFrequency = existingLoan.package?.frequency?.toUpperCase() || 'WEEKLY';
-      
-      // Recreate schedules accurately based on the new Sanction Date
-      await tx.loanSchedule.deleteMany({ where: { loanId: existingLoan.id } });
-      
-      if (updatedLoan.noOfDues > 0 && updatedLoan.perDueAmount > 0) {
-        const schedules = [];
-        let currentDate = new Date(finalSanctionDate);
-        
-        for (let i = 0; i < updatedLoan.noOfDues; i++) {
-          schedules.push({
-            loanId: updatedLoan.id,
-            dueDate: new Date(currentDate),
-            emiAmount: updatedLoan.perDueAmount,
-            status: 'PENDING'
-          });
+    if (status === LoanStatus.DROPPED && existingLoan.status !== LoanStatus.DROPPED) {
+      await handleDroppedLoan(tx, existingLoan.id);
+    }
 
-          if (packageFrequency === 'WEEKLY') {
-            currentDate.setDate(currentDate.getDate() + 7);
-          } else if (packageFrequency === 'DAILY') {
-            currentDate.setDate(currentDate.getDate() + 1);
-          } else {
-            currentDate.setMonth(currentDate.getMonth() + 1);
-          }
-        }
-        await tx.loanSchedule.createMany({ data: schedules });
+    if (status === LoanStatus.CLOSED && existingLoan.status !== LoanStatus.CLOSED) {
+      await handleManualLoanClose(
+        tx,
+        existingLoan.id,
+        existingLoan.customerId,
+        disbursementDate ? new Date(disbursementDate) : new Date()
+      );
+    }
+
+    if (status === LoanStatus.APPROVED && existingLoan.status !== LoanStatus.APPROVED) {
+      const packageFrequency =
+        existingLoan.package?.frequency?.toUpperCase() ||
+        existingLoan.customer?.center?.repaymentType?.toUpperCase() ||
+        'WEEKLY';
+      const scheduleStart = existingLoan.firstDueDate
+        ? new Date(existingLoan.firstDueDate)
+        : sanctionDate
+          ? new Date(sanctionDate)
+          : new Date(updatedLoan.sanctionDate || updatedLoan.createdAt);
+
+      await tx.loanSchedule.deleteMany({ where: { loanId: existingLoan.id } });
+
+      if (updatedLoan.noOfDues > 0 && updatedLoan.perDueAmount > 0) {
+        const lastEmi = resolveLastEmiAmount(updatedLoan.totalDueAmount, updatedLoan.perDueAmount, updatedLoan.noOfDues);
+        await tx.loanSchedule.createMany({
+          data: buildScheduleRows(
+            updatedLoan.id,
+            updatedLoan.noOfDues,
+            updatedLoan.perDueAmount,
+            scheduleStart,
+            packageFrequency,
+            lastEmi
+          ),
+        });
       }
 
+      const liabilityAmount = existingLoan.totalDueAmount || 0;
       const disbursedAmount = existingLoan.netDisbursement || existingLoan.amount || 0;
 
-      // CustomerLedger disbursement entry
       const lastCustomerLedger = await tx.customerLedger.findFirst({
         where: { customerId: existingLoan.customerId },
         orderBy: { createdAt: 'desc' },
       });
-      const custOpening = lastCustomerLedger ? lastCustomerLedger.closingBalance : 0;
-      const custClosing = custOpening + disbursedAmount;
+      const custOpening = lastCustomerLedger?.closingBalance ?? 0;
 
       await tx.customerLedger.create({
         data: {
           transactionType: 'Disbursement',
           amount: disbursedAmount,
           openingBalance: custOpening,
-          closingBalance: custClosing,
+          closingBalance: custOpening + disbursedAmount,
           remarks: `Loan ${existingLoan.loanNumber} disbursement`,
           customerId: existingLoan.customerId,
           date: updatedLoan.disbursementDate || new Date(),
-        }
+        },
       });
 
-      // LoanLedger disbursement entry
       const lastLoanLedger = await tx.loanLedger.findFirst({
         where: { loanId: existingLoan.id },
         orderBy: { createdAt: 'desc' },
       });
-      const loanOpening = lastLoanLedger ? lastLoanLedger.closingBalance : 0;
-      const loanClosing = loanOpening + (existingLoan.totalDueAmount || disbursedAmount);
+      const loanOpening = lastLoanLedger?.closingBalance ?? 0;
 
       await tx.loanLedger.create({
         data: {
           transactionType: 'Disbursement',
-          amount: disbursedAmount,
+          amount: liabilityAmount,
           openingBalance: loanOpening,
-          closingBalance: loanClosing,
+          closingBalance: loanOpening + liabilityAmount,
           remarks: `Loan ${existingLoan.loanNumber} approved`,
           loanId: existingLoan.id,
           date: updatedLoan.disbursementDate || new Date(),
-        }
+        },
       });
     }
 
@@ -251,11 +280,10 @@ export const getLoans = asyncHandler(async (req: Request, res: Response) => {
   const where: any = {};
   if (customerId) where.customerId = String(customerId);
   if (status) {
-    const statuses = String(status).split(',').map(s => s.trim());
+    const statuses = String(status).split(',').map((s) => s.trim());
     where.status = statuses.length > 1 ? { in: statuses } : statuses[0];
   }
 
-  // FIX #6: Support centerId filter for bulk collection page performance
   if (centerId) {
     where.customer = { ...where.customer, centerId: String(centerId) };
   }
@@ -263,7 +291,7 @@ export const getLoans = asyncHandler(async (req: Request, res: Response) => {
   const user = (req as any).user;
   const userBranchId = user?.branchId;
 
-  if (res.locals.areaIds && res.locals.areaIds.length > 0) {
+  if (res.locals.areaIds?.length > 0) {
     where.customer = { ...where.customer, areaId: { in: res.locals.areaIds } };
   } else if (userBranchId) {
     where.customer = { ...where.customer, area: { branchId: userBranchId } };
@@ -271,21 +299,15 @@ export const getLoans = asyncHandler(async (req: Request, res: Response) => {
     where.customer = { ...where.customer, area: { branchId: String(branchId) } };
   }
 
-
   const loans = await prisma.loan.findMany({
     where,
     include: {
       customer: { include: { area: { include: { branch: true } }, center: true } },
       staff: true,
-      schedules: {
-        orderBy: { dueDate: 'asc' }
-      },
-      collections: {
-        take: 5,
-        orderBy: { trnDate: 'desc' }
-      }
+      schedules: { orderBy: { dueDate: 'asc' } },
+      collections: { take: 5, orderBy: { trnDate: 'desc' } },
     },
-    orderBy: { createdAt: 'desc' }
+    orderBy: { createdAt: 'desc' },
   });
   res.json(loans);
 });
@@ -298,33 +320,34 @@ export const getLoanById = asyncHandler(async (req: Request, res: Response) => {
       customer: { include: { center: true, area: { include: { branch: true } }, kyc: true, bank: true, coApplicant: true } },
       staff: true,
       package: true,
-      guarantors: true, // FIX #18: include guarantors
-      schedules: {
-        orderBy: { dueDate: 'asc' }
-      },
-      collections: {
-        orderBy: { trnDate: 'desc' },
-        include: { staff: { select: { name: true } } }
-      }
-    }
+      guarantors: true,
+      schedules: { orderBy: { dueDate: 'asc' } },
+      collections: { orderBy: { trnDate: 'desc' }, include: { staff: { select: { name: true } } } },
+    },
   });
 
-  if (!loan) throw new Error('Loan not found');
+  if (!loan) return res.status(404).json({ error: 'Loan not found' });
   res.json(loan);
 });
 
 export const deleteLoan = asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params;
 
-  // Security check
   const existingLoan = await prisma.loan.findUnique({
-    where: { id: id as string },
-    include: { customer: { include: { area: true } } }
-  }) as any;
-  if (!existingLoan) throw new Error('Loan not found');
+    where: { id: String(id) },
+    include: { customer: { include: { area: true } }, collections: { take: 1 } },
+  });
+  if (!existingLoan) return res.status(404).json({ error: 'Loan not found' });
 
   const user = (req as any).user;
   requireBranchAccess(user, existingLoan.customer?.area?.branchId, 'delete a loan for a customer outside your branch');
+
+  if (existingLoan.status !== LoanStatus.PENDING) {
+    return res.status(400).json({ error: 'Only pending loans can be deleted' });
+  }
+  if (existingLoan.collections.length > 0) {
+    return res.status(400).json({ error: 'Cannot delete loan with collections' });
+  }
 
   await prisma.loan.delete({ where: { id: String(id) } });
   res.json({ message: 'Loan deleted successfully' });
@@ -334,7 +357,7 @@ export const getLoanLedger = asyncHandler(async (req: Request, res: Response) =>
   const { id } = req.params;
 
   const loan = await prisma.loan.findUnique({ where: { id: String(id) } });
-  if (!loan) throw new Error('Loan not found');
+  if (!loan) return res.status(404).json({ error: 'Loan not found' });
 
   const ledger = await prisma.loanLedger.findMany({
     where: { loanId: String(id) },
