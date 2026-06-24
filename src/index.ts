@@ -48,6 +48,7 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
       'http://localhost:3001',
       'https://ponnilam-ui.vercel.app',
       'https://ponnilamfinance.com',
+      'https://app.ponnilamfincorp.com',
     ];
 
 app.use(cors({
