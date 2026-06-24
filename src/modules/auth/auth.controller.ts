@@ -170,8 +170,8 @@ export const changePassword = asyncHandler(async (req: Request, res: Response) =
   }
 
   const { newPassword } = req.body;
-  if (!newPassword || newPassword.length < 6) {
-    return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  if (!newPassword || newPassword.length < 4) {
+    return res.status(400).json({ error: 'Password must be at least 4 characters' });
   }
 
   const hashedPassword = await bcrypt.hash(newPassword, 10);
