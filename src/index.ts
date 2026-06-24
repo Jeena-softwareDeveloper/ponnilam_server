@@ -77,7 +77,7 @@ app.use('/api/v1/masters', branchScope);
 app.use('/api/v1/masters/branches', requireAdmin, auditMiddleware('Branch'), branchRoutes);
 app.use('/api/v1/masters/states', requireAdmin, auditMiddleware('State'), stateRoutes);
 app.use('/api/v1/masters/districts', requireAdmin, auditMiddleware('District'), districtRoutes);
-app.use('/api/v1/masters/roles', requireAdmin, auditMiddleware('Role'), roleRoutes);
+app.use('/api/v1/masters/roles', auditMiddleware('Role'), roleRoutes);
 app.use('/api/v1/masters/menus', requireAdmin, auditMiddleware('Menu'), menuRoutes);
 app.use('/api/v1/masters/loan-packages', auditMiddleware('LoanPackage'), loanPackageRoutes);
 app.use('/api/v1/masters/centers', auditMiddleware('Center'), centerRoutes);
