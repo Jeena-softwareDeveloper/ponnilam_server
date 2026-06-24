@@ -2,7 +2,6 @@ import prisma from '../../utils/prisma';
 import { Request, Response } from 'express';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { requireBranchAccess } from '../../utils/security.utils';
-import { isAdminUser } from '../../utils/user.utils';
 import {
   buildScheduleRows,
   handleDroppedLoan,
@@ -13,6 +12,7 @@ import {
 import { LoanStatus, OPEN_LOAN_STATUSES } from '../../utils/prisma-enums';
 import { nextLoanNumber } from '../../utils/sequence.utils';
 import { parsePagination, paginatedResponse } from '../../utils/pagination.utils';
+import { canEditMenu } from '../../utils/permissions.utils';
 
 export const createLoan = asyncHandler(async (req: Request, res: Response) => {
   const {
@@ -149,13 +149,9 @@ export const updateLoanStatus = asyncHandler(async (req: Request, res: Response)
 
   const approvingStatuses: LoanStatus[] = [LoanStatus.APPROVED, LoanStatus.ACTIVE];
   if (approvingStatuses.includes(status as LoanStatus) && existingLoan.status !== status) {
-    if (!isAdminUser(user)) {
-      const staffMenu = await prisma.staffMenu.findFirst({
-        where: { staffId: user.id, menu: { path: '/admin/loans' } },
-      });
-      if (!staffMenu?.canEdit) {
-        return res.status(403).json({ error: 'You do not have permission to approve loans.' });
-      }
+    const canApprove = await canEditMenu(user, '/admin/loans');
+    if (!canApprove) {
+      return res.status(403).json({ error: 'You do not have permission to approve loans.' });
     }
   }
 

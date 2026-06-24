@@ -2,10 +2,8 @@ import { Request, Response } from 'express';
 import prisma from '../../utils/prisma';
 import { LOAN_COLLECTIBLE_STATUSES, LoanStatus, OPEN_LOAN_STATUSES } from '../../utils/prisma-enums';
 
-// Generate Center Code (e.g., SAT001 from "Sattur" center name)
 const generateCenterCode = async (name: string) => {
   const prefix = name.trim().replace(/[^a-zA-Z]/g, '').substring(0, 3).toUpperCase();
-  // Count existing centers with the same prefix
   const existing = await prisma.center.findMany({
     where: { code: { startsWith: prefix } },
     orderBy: { code: 'desc' },
