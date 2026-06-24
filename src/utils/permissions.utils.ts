@@ -84,3 +84,13 @@ export async function canEditMenu(user: { id: string; role?: { name?: string } |
   const permission = await resolveMenuPermission(user, menuPath);
   return permission?.canEdit === true;
 }
+
+export async function canCreateMenu(user: { id: string; role?: { name?: string } | string }, menuPath: string): Promise<boolean> {
+  const permission = await resolveMenuPermission(user, menuPath);
+  return permission?.canCreate === true;
+}
+
+export async function canDeleteMenu(user: { id: string; role?: { name?: string } | string }, menuPath: string): Promise<boolean> {
+  const permission = await resolveMenuPermission(user, menuPath);
+  return permission?.canDelete === true;
+}

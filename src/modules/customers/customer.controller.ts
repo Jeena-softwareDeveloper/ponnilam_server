@@ -5,6 +5,8 @@ import { requireBranchAccess } from '../../utils/security.utils';
 import { OPEN_LOAN_STATUSES } from '../../utils/prisma-enums';
 import { nextCustomerNo } from '../../utils/sequence.utils';
 import { parsePagination, paginatedResponse } from '../../utils/pagination.utils';
+import { validateCenterMemberLimit, validateCustomerCenterAssignment } from '../../utils/center-member.utils';
+import { assertMenuPermission, checkAreaScope, isValidMobile, resolveStaffId } from '../../utils/validation.helpers';
 
 export const createCustomer = asyncHandler(async (req: Request, res: Response) => {
   try {
@@ -19,11 +21,38 @@ export const createCustomer = asyncHandler(async (req: Request, res: Response) =
     if (!general?.name) {
       return res.status(400).json({ error: 'Customer name is required' });
     }
-    if (!general?.areaId) {
-      return res.status(400).json({ error: 'Customer area is required' });
-    }
     if (!general?.mobile) {
       return res.status(400).json({ error: 'Customer mobile number is required' });
+    }
+    if (!isValidMobile(general.mobile)) {
+      return res.status(400).json({ error: 'Enter a valid 10-digit mobile number' });
+    }
+    if (!general?.centerId) {
+      return res.status(400).json({ error: 'Center is required' });
+    }
+
+    const user = (req as any).user;
+    const createPerm = await assertMenuPermission(user, '/admin/customers', 'canCreate');
+    if (createPerm) return res.status(403).json({ error: createPerm });
+
+    let resolvedAreaId = general.areaId;
+    if (general?.centerId) {
+      const center = await prisma.center.findUnique({ where: { id: general.centerId } });
+      if (!center) return res.status(400).json({ error: 'Invalid center selected' });
+      if (!center.isActive) return res.status(400).json({ error: 'Selected center is inactive' });
+      resolvedAreaId = center.areaId;
+      if (general.areaId && center.areaId !== general.areaId) {
+        return res.status(400).json({ error: 'Center does not belong to the selected area' });
+      }
+      const centerCheck = await validateCustomerCenterAssignment(prisma, general.centerId, resolvedAreaId);
+      if (!centerCheck.ok) return res.status(400).json({ error: centerCheck.error });
+      const memberCheck = await validateCenterMemberLimit(prisma, general.centerId, {
+        memberType: general.centerMemberType,
+      });
+      if (!memberCheck.ok) return res.status(400).json({ error: memberCheck.error });
+    }
+    if (!resolvedAreaId) {
+      return res.status(400).json({ error: 'Customer area is required' });
     }
 
     if (kyc?.idProof1No) {
@@ -40,37 +69,30 @@ export const createCustomer = asyncHandler(async (req: Request, res: Response) =
       if (existing2) return res.status(400).json({ error: `Customer with ID Proof Number ${kyc.idProof2No} already exists.` });
     }
 
-    if (general?.centerId) {
-      const center = await prisma.center.findUnique({ where: { id: general.centerId } });
-      if (!center) return res.status(400).json({ error: 'Invalid center selected' });
-      if (general.areaId && center.areaId !== general.areaId) {
-        return res.status(400).json({ error: 'Center does not belong to the selected area' });
-      }
-    }
     if (general?.groupId) {
       const group = await prisma.group.findUnique({ where: { id: general.groupId }, include: { center: true } });
       if (!group) return res.status(400).json({ error: 'Invalid group selected' });
-      if (general.centerId && group.centerId !== general.centerId) {
+      if (!group.isActive) return res.status(400).json({ error: 'Selected group is inactive' });
+      if (!general.centerId || group.centerId !== general.centerId) {
         return res.status(400).json({ error: 'Group does not belong to the selected center' });
+      }
+      if (group.center?.areaId !== resolvedAreaId) {
+        return res.status(400).json({ error: 'Group does not belong to the customer area' });
       }
     }
 
-    // Security Check: Enforce Branch Scoping
-    const user = (req as any).user;
-    if (general?.areaId) {
-      const area = await prisma.area.findUnique({ where: { id: general.areaId } });
-      if (!area) throw new Error('Invalid area selected');
-      requireBranchAccess(user, area.branchId, 'create entries outside your assigned branch');
+    const area = await prisma.area.findUnique({ where: { id: resolvedAreaId } });
+    if (!area) return res.status(400).json({ error: 'Invalid area selected' });
+    const areaScopeErr = checkAreaScope(user, res.locals.areaIds, resolvedAreaId);
+    if (areaScopeErr) return res.status(403).json({ error: areaScopeErr });
+    requireBranchAccess(user, area.branchId, 'create entries outside your assigned branch');
+
+    if (general?.employeeId) {
+      const staffCheck = await resolveStaffId(general.employeeId, user, { fallbackToUser: false });
+      if ('error' in staffCheck) return res.status(400).json({ error: staffCheck.error });
     }
 
-    // Get the branchId for this customer (from area or logged-in user)
-    let branchIdForNo: string | undefined;
-    if (general?.areaId) {
-      const area = await prisma.area.findUnique({ where: { id: general.areaId } });
-      branchIdForNo = area?.branchId || undefined;
-    } else if (user?.branchId) {
-      branchIdForNo = user.branchId;
-    }
+    const branchIdForNo = area.branchId || user?.branchId || undefined;
 
     const customer = await prisma.$transaction(async (tx) => {
       const customerNo = await nextCustomerNo(tx, branchIdForNo);
@@ -87,7 +109,7 @@ export const createCustomer = asyncHandler(async (req: Request, res: Response) =
         occupation: general.occupation,
         phone: general.phone,
         mobile: general.mobile,
-        areaId: general.areaId,
+        areaId: resolvedAreaId,
         centerId: general.centerId || null,
         groupId: general.groupId || null,
         employeeId: general.employeeId || null,
@@ -174,8 +196,11 @@ export const updateCustomer = asyncHandler(async (req: Request, res: Response) =
     }
 
     const user = (req as any).user;
-    // Check if they have access to the EXISTING customer's branch
+    const editPerm = await assertMenuPermission(user, '/admin/customers', 'canEdit');
+    if (editPerm) return res.status(403).json({ error: editPerm });
     requireBranchAccess(user, existingCustomer.area?.branchId, 'modify a customer from another branch');
+    const areaScopeErr = checkAreaScope(user, res.locals.areaIds, existingCustomer.areaId);
+    if (areaScopeErr) return res.status(403).json({ error: areaScopeErr });
     
     // Check if they are trying to move the customer to a new area outside their branch
     if (general?.areaId && general.areaId !== existingCustomer.areaId) {
@@ -206,6 +231,49 @@ export const updateCustomer = asyncHandler(async (req: Request, res: Response) =
     const updateData: any = {};
     
     if (general) {
+      if (general.areaId !== undefined && general.areaId !== existingCustomer.areaId) {
+        const oldArea = existingCustomer.area;
+        const newArea = await prisma.area.findUnique({ where: { id: general.areaId } });
+        if (!newArea) return res.status(400).json({ error: 'Invalid area selected' });
+        if (oldArea?.branchId !== newArea.branchId) {
+          return res.status(400).json({ error: 'Customer cannot be moved to another branch.' });
+        }
+        return res.status(400).json({ error: 'Customer area cannot be changed after registration.' });
+      }
+
+      if (general.centerId !== undefined) {
+        const newCenterId = general.centerId || null;
+        const centerChanged = newCenterId !== existingCustomer.centerId;
+
+        if (centerChanged) {
+          if (newCenterId) {
+            return res.status(400).json({
+              error: 'Customer cannot be moved to another center. Use Import for Second Loan if needed.',
+            });
+          }
+          const openLoan = await prisma.loan.findFirst({
+            where: { customerId: String(id), status: { in: OPEN_LOAN_STATUSES } },
+          });
+          if (openLoan) {
+            return res.status(400).json({ error: 'Cannot remove customer from center while they have an active loan.' });
+          }
+        }
+      }
+
+      if (general.groupId !== undefined && general.groupId) {
+        const group = await prisma.group.findUnique({ where: { id: general.groupId }, include: { center: true } });
+        if (!group) return res.status(400).json({ error: 'Invalid group selected' });
+        if (!group.isActive) return res.status(400).json({ error: 'Selected group is inactive' });
+        const customerCenterId = general.centerId !== undefined ? general.centerId : existingCustomer.centerId;
+        if (!customerCenterId || group.centerId !== customerCenterId) {
+          return res.status(400).json({ error: 'Group does not belong to the customer center' });
+        }
+      }
+      if (general.employeeId !== undefined && general.employeeId) {
+        const staffCheck = await resolveStaffId(general.employeeId, user, { fallbackToUser: false });
+        if ('error' in staffCheck) return res.status(400).json({ error: staffCheck.error });
+      }
+
       if (general.name !== undefined) updateData.name = general.name;
       if (general.dob !== undefined) updateData.dob = general.dob ? new Date(general.dob) : null;
       if (general.placeOfBirth !== undefined) updateData.placeOfBirth = general.placeOfBirth;
@@ -345,6 +413,10 @@ export const getCustomers = asyncHandler(async (req: Request, res: Response) => 
 
     if (centerId) {
       where.centerId = String(centerId);
+      const center = await prisma.center.findUnique({ where: { id: String(centerId) } });
+      if (center) {
+        where.areaId = center.areaId;
+      }
     }
 
     if (withoutActiveLoan === 'true') {
@@ -464,7 +536,11 @@ export const deleteCustomer = asyncHandler(async (req: Request, res: Response) =
     }
 
     const user = (req as any).user;
+    const deletePerm = await assertMenuPermission(user, '/admin/customers', 'canDelete');
+    if (deletePerm) return res.status(403).json({ error: deletePerm });
     requireBranchAccess(user, customer.area?.branchId, 'delete a customer from another branch');
+    const areaScopeErr = checkAreaScope(user, res.locals.areaIds, customer.areaId);
+    if (areaScopeErr) return res.status(403).json({ error: areaScopeErr });
 
     const openLoans = customer.loans.filter(
       (l) => l.outstandingAmount > 0 || OPEN_LOAN_STATUSES.includes(l.status as typeof OPEN_LOAN_STATUSES[number])
@@ -494,7 +570,11 @@ export const toggleCustomerStatus = asyncHandler(async (req: Request, res: Respo
     if (!customer) return res.status(404).json({ error: 'Customer not found' });
 
     const user = (req as any).user;
+    const editPerm = await assertMenuPermission(user, '/admin/customers', 'canEdit');
+    if (editPerm) return res.status(403).json({ error: editPerm });
     requireBranchAccess(user, customer.area?.branchId, 'update a customer outside your branch');
+    const areaScopeErr = checkAreaScope(user, res.locals.areaIds, customer.areaId);
+    if (areaScopeErr) return res.status(403).json({ error: areaScopeErr });
 
     if (customer.isActive && customer.loans.length > 0) {
       return res.status(400).json({ error: 'Cannot deactivate customer with open loans' });

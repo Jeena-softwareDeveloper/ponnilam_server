@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import prisma from '../../utils/prisma';
+import { validateLoanPackageFields } from '../../utils/validation.helpers';
 
 export const getLoanPackages = async (req: Request, res: Response): Promise<any> => {
   try {
@@ -17,6 +18,12 @@ export const createLoanPackage = async (req: Request, res: Response): Promise<an
     if (!name || interestRate === undefined || !durationDays) {
       return res.status(400).json({ error: 'Name, interestRate, and durationDays are required' });
     }
+    const validationErr = validateLoanPackageFields({
+      interestRate: parseFloat(interestRate),
+      durationDays: parseInt(durationDays),
+      frequency: frequency || 'WEEKLY',
+    });
+    if (validationErr) return res.status(400).json({ error: validationErr });
     const pkg = await prisma.loanPackage.create({
       data: {
         name,
@@ -37,6 +44,12 @@ export const updateLoanPackage = async (req: Request, res: Response): Promise<an
   try {
     const id = String(req.params.id);
     const { name, interestRate, durationDays, frequency, isActive } = req.body;
+    const validationErr = validateLoanPackageFields({
+      ...(interestRate !== undefined && { interestRate: parseFloat(interestRate) }),
+      ...(durationDays !== undefined && { durationDays: parseInt(durationDays) }),
+      ...(frequency !== undefined && { frequency }),
+    });
+    if (validationErr) return res.status(400).json({ error: validationErr });
     const pkg = await prisma.loanPackage.update({
       where: { id },
       data: {
