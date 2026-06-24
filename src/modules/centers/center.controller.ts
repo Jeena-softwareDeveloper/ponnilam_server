@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import prisma from '../../utils/prisma';
-import { LOAN_COLLECTIBLE_STATUSES, LoanStatus } from '../../utils/prisma-enums';
+import { LOAN_COLLECTIBLE_STATUSES, LoanStatus, OPEN_LOAN_STATUSES } from '../../utils/prisma-enums';
 
 // Generate Center Code (e.g., SAT001 from "Sattur" center name)
 const generateCenterCode = async (name: string) => {
@@ -317,7 +317,7 @@ export const importCustomersToNewCenter = async (req: Request, res: Response): P
     }
 
     const eligible = sourceCenter.customers.filter((c) =>
-      !c.loans.some((l) => LOAN_COLLECTIBLE_STATUSES.includes(l.status as typeof LOAN_COLLECTIBLE_STATUSES[number]))
+      !c.loans.some((l) => OPEN_LOAN_STATUSES.includes(l.status as typeof OPEN_LOAN_STATUSES[number]))
     );
 
     let idsToImport: string[] = [];
@@ -364,6 +364,64 @@ export const importCustomersToNewCenter = async (req: Request, res: Response): P
   } catch (error: any) {
     if (error.code === 'P2002') return res.status(409).json({ error: 'Center name or code already exists' });
     console.error('Error importing customers to new center:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+/** Center collection sheet data for print — all members with collectible loans. */
+export const getCenterCollectionSheet = async (req: Request, res: Response): Promise<any> => {
+  try {
+    const centerId = String(req.params.id);
+    const center = await prisma.center.findUnique({
+      where: { id: centerId },
+      include: {
+        area: { include: { branch: true } },
+        employee: { select: { name: true, phone: true } },
+        customers: {
+          include: {
+            loans: {
+              where: { status: { in: LOAN_COLLECTIBLE_STATUSES } },
+              include: {
+                schedules: { orderBy: { dueDate: 'asc' } },
+              },
+            },
+          },
+          orderBy: { customerNo: 'asc' },
+        },
+      },
+    });
+
+    if (!center) return res.status(404).json({ error: 'Center not found' });
+
+    const user = (req as any).user;
+    if (user?.role?.name !== 'Admin' && user?.branchId) {
+      if (center.area?.branchId !== user.branchId) {
+        return res.status(403).json({ error: 'Security Violation: center is outside your branch.' });
+      }
+    }
+
+    const rows = center.customers.flatMap((customer) =>
+      customer.loans.map((loan) => {
+        const totalPaid = loan.schedules.reduce((sum, s) => sum + (s.amountPaid || 0), 0);
+        const emi = loan.perDueAmount;
+        const balance = loan.outstandingAmount;
+        return {
+          customerId: customer.id,
+          customerNo: customer.customerNo,
+          customerName: customer.name,
+          loanId: loan.id,
+          loanNumber: loan.loanNumber,
+          emi,
+          collected: totalPaid,
+          balance,
+          status: loan.status,
+        };
+      })
+    );
+
+    return res.status(200).json({ center, rows });
+  } catch (error) {
+    console.error('Error fetching center collection sheet:', error);
     return res.status(500).json({ error: 'Internal server error' });
   }
 };

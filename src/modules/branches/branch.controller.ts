@@ -2,10 +2,18 @@ import prisma from '../../utils/prisma';
 import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { assignBranchManagerMenus } from '../../utils/branch-menus.utils';
+import { generateTemporaryPassword } from '../../utils/auth.utils';
 
 export const getBranches = async (req: Request, res: Response): Promise<any> => {
   try {
+    const user = (req as any).user;
+    const where: any = {};
+    if (user?.role?.name !== 'Admin' && user?.branchId) {
+      where.id = user.branchId;
+    }
+
     const branches = await prisma.branch.findMany({
+      where: Object.keys(where).length ? where : undefined,
       orderBy: { code: 'asc' },
       include: { 
         state: true, 
@@ -74,7 +82,8 @@ export const createBranch = async (req: Request, res: Response): Promise<any> =>
           roleId = role.id;
         }
 
-        const hashedPassword = await bcrypt.hash(adminPassword || 'password123', 10);
+        const tempPassword = adminPassword || generateTemporaryPassword();
+        const hashedPassword = await bcrypt.hash(tempPassword, 10);
 
         const newStaff = await tx.staff.create({
           data: {
@@ -84,12 +93,13 @@ export const createBranch = async (req: Request, res: Response): Promise<any> =>
             password: hashedPassword,
             branchId: newBranch.id,
             roleId: roleId,
+            mustChangePassword: !adminPassword,
           }
         });
 
         await assignBranchManagerMenus(tx, newBranch.id, newStaff.id);
 
-        return newBranch;
+        return { branch: newBranch, ...( !adminPassword ? { temporaryPassword: tempPassword } : {}) };
       });
       return res.status(201).json(branch);
     } else {
@@ -174,7 +184,8 @@ export const updateBranch = async (req: Request, res: Response): Promise<any> =>
         } else {
           // If no staff existed, create one
           if (!adminPassword) {
-            dataToUpdate.password = await bcrypt.hash('password123', 10);
+            dataToUpdate.password = await bcrypt.hash(generateTemporaryPassword(), 10);
+            dataToUpdate.mustChangePassword = true;
           }
           dataToUpdate.branchId = id;
           const newStaff = await tx.staff.create({ data: dataToUpdate });

@@ -11,32 +11,8 @@ import {
   resolveLastEmiAmount,
 } from '../../utils/loan.utils';
 import { LoanStatus, OPEN_LOAN_STATUSES } from '../../utils/prisma-enums';
-
-const generateLoanNo = async (branchId?: string, tx?: any) => {
-  const db = tx || prisma;
-  let prefix = 'L';
-  if (branchId) {
-    const branch = await db.branch.findUnique({ where: { id: branchId } });
-    if (branch?.name) {
-      prefix = branch.name.trim().replace(/[^a-zA-Z]/g, '').substring(0, 3).toUpperCase() + '-';
-    }
-  }
-
-  const lastLoan = await db.loan.findFirst({
-    where: { loanNumber: { startsWith: prefix } },
-    orderBy: { loanNumber: 'desc' },
-  });
-
-  if (!lastLoan?.loanNumber) return `${prefix}L0001`;
-
-  const lastNoStr = lastLoan.loanNumber.replace(prefix + 'L', '');
-  let lastNo = parseInt(lastNoStr, 10);
-  if (isNaN(lastNo)) {
-    const match = lastLoan.loanNumber.match(/\d+$/);
-    lastNo = match ? parseInt(match[0], 10) : 0;
-  }
-  return `${prefix}L${(lastNo + 1).toString().padStart(4, '0')}`;
-};
+import { nextLoanNumber } from '../../utils/sequence.utils';
+import { parsePagination, paginatedResponse } from '../../utils/pagination.utils';
 
 export const createLoan = asyncHandler(async (req: Request, res: Response) => {
   const {
@@ -48,6 +24,10 @@ export const createLoan = asyncHandler(async (req: Request, res: Response) => {
     disbursementDate, firstDueDate,
     packageId, applicationDate, remarks, guarantors,
   } = req.body;
+
+  if (!customerId) return res.status(400).json({ error: 'Customer is required' });
+  if (!amount || Number(amount) <= 0) return res.status(400).json({ error: 'Valid loan amount is required' });
+  if (!noOfDues || Number(noOfDues) <= 0) return res.status(400).json({ error: 'Number of dues is required' });
 
   const user = (req as any).user;
   const customer = await prisma.customer.findUnique({
@@ -72,8 +52,10 @@ export const createLoan = asyncHandler(async (req: Request, res: Response) => {
   const numDues = Number(noOfDues);
   const perDue = Number(perDueAmount);
   const totalDue = Number(totalDueAmount);
-  if (Math.abs(totalDue - numDues * perDue) > 0.01) {
-    return res.status(400).json({ error: 'Total due amount must equal number of dues × per due amount' });
+  const lastEmi = resolveLastEmiAmount(totalDue, perDue, numDues);
+  const scheduleSum = numDues <= 1 ? perDue : perDue * (numDues - 1) + lastEmi;
+  if (Math.abs(totalDue - scheduleSum) > 0.01) {
+    return res.status(400).json({ error: 'Total due must equal sum of all EMI installments' });
   }
   const net = Number(netDisbursement);
   const deduct = Number(deductionAmount);
@@ -89,7 +71,7 @@ export const createLoan = asyncHandler(async (req: Request, res: Response) => {
   let resolvedInterestRate = Number(req.body.interestRate || pkg.interestRate);
 
   const loan = await prisma.$transaction(async (tx) => {
-    const loanNumber = await generateLoanNo(customer.area?.branchId || user?.branchId, tx);
+    const loanNumber = await nextLoanNumber(tx, customer.area?.branchId || user?.branchId);
 
     const created = await tx.loan.create({
       data: {
@@ -190,7 +172,7 @@ export const updateLoanStatus = asyncHandler(async (req: Request, res: Response)
     });
 
     if (status === LoanStatus.DROPPED && existingLoan.status !== LoanStatus.DROPPED) {
-      await handleDroppedLoan(tx, existingLoan.id);
+      await handleDroppedLoan(tx, existingLoan.id, existingLoan.customerId);
     }
 
     if (status === LoanStatus.CLOSED && existingLoan.status !== LoanStatus.CLOSED) {
@@ -299,17 +281,24 @@ export const getLoans = asyncHandler(async (req: Request, res: Response) => {
     where.customer = { ...where.customer, area: { branchId: String(branchId) } };
   }
 
-  const loans = await prisma.loan.findMany({
-    where,
-    include: {
-      customer: { include: { area: { include: { branch: true } }, center: true } },
-      staff: true,
-      schedules: { orderBy: { dueDate: 'asc' } },
-      collections: { take: 5, orderBy: { trnDate: 'desc' } },
-    },
-    orderBy: { createdAt: 'desc' },
-  });
-  res.json(loans);
+  const { page, limit, skip } = parsePagination(req.query as Record<string, string>);
+
+  const [loans, total] = await Promise.all([
+    prisma.loan.findMany({
+      where,
+      include: {
+        customer: { include: { area: { include: { branch: true } }, center: true } },
+        staff: true,
+        schedules: { orderBy: { dueDate: 'asc' } },
+        collections: { where: { isVoided: false }, take: 5, orderBy: { trnDate: 'desc' } },
+      },
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take: limit,
+    }),
+    prisma.loan.count({ where }),
+  ]);
+  res.json(paginatedResponse(loans, total, page, limit));
 });
 
 export const getLoanById = asyncHandler(async (req: Request, res: Response) => {
@@ -322,11 +311,100 @@ export const getLoanById = asyncHandler(async (req: Request, res: Response) => {
       package: true,
       guarantors: true,
       schedules: { orderBy: { dueDate: 'asc' } },
-      collections: { orderBy: { trnDate: 'desc' }, include: { staff: { select: { name: true } } } },
+      collections: { where: { isVoided: false }, orderBy: { trnDate: 'desc' }, include: { staff: { select: { name: true } } } },
     },
   });
 
   if (!loan) return res.status(404).json({ error: 'Loan not found' });
+
+  const user = (req as any).user;
+  requireBranchAccess(user, loan.customer?.area?.branchId, 'view this loan');
+  if (res.locals.areaIds?.length && loan.customer?.areaId && !res.locals.areaIds.includes(loan.customer.areaId)) {
+    return res.status(403).json({ error: 'Security Violation: loan is outside your area.' });
+  }
+
+  res.json(loan);
+});
+
+export const updateLoanFinancial = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const {
+    amount, noOfDues, perDueAmount, totalDueAmount, deductionAmount, netDisbursement,
+    firstDueDate, remarks,
+  } = req.body;
+
+  const existingLoan = await prisma.loan.findUnique({
+    where: { id: String(id) },
+    include: { customer: { include: { area: true, center: true } }, package: true },
+  });
+  if (!existingLoan) return res.status(404).json({ error: 'Loan not found' });
+
+  const user = (req as any).user;
+  requireBranchAccess(user, existingLoan.customer?.area?.branchId, 'update a loan outside your branch');
+
+  if (existingLoan.status !== LoanStatus.PENDING && existingLoan.status !== LoanStatus.APPROVED) {
+    return res.status(400).json({ error: 'Financial fields can only be edited for PENDING or APPROVED loans' });
+  }
+
+  const numDues = Number(noOfDues ?? existingLoan.noOfDues);
+  const perDue = Number(perDueAmount ?? existingLoan.perDueAmount);
+  const totalDue = Number(totalDueAmount ?? existingLoan.totalDueAmount);
+  const lastEmi = resolveLastEmiAmount(totalDue, perDue, numDues);
+  const scheduleSum = numDues <= 1 ? perDue : perDue * (numDues - 1) + lastEmi;
+  if (Math.abs(totalDue - scheduleSum) > 0.01) {
+    return res.status(400).json({ error: 'Total due must equal sum of all EMI installments' });
+  }
+
+  const loanAmount = Number(amount ?? existingLoan.amount);
+  const deduct = Number(deductionAmount ?? existingLoan.deductionAmount);
+  const net = Number(netDisbursement ?? existingLoan.netDisbursement);
+  if (Math.abs(net - (loanAmount - deduct)) > 0.01) {
+    return res.status(400).json({ error: 'Net disbursement must equal loan amount minus deduction' });
+  }
+
+  const loan = await prisma.$transaction(async (tx) => {
+    const updated = await tx.loan.update({
+      where: { id: String(id) },
+      data: {
+        amount: loanAmount,
+        noOfDues: numDues,
+        perDueAmount: perDue,
+        totalDueAmount: totalDue,
+        deductionAmount: deduct,
+        netDisbursement: net,
+        outstandingAmount: totalDue,
+        ...(firstDueDate && { firstDueDate: new Date(firstDueDate) }),
+        ...(remarks !== undefined && { remarks }),
+      },
+    });
+
+    if (existingLoan.status === LoanStatus.APPROVED) {
+      const packageFrequency =
+        existingLoan.package?.frequency?.toUpperCase() ||
+        existingLoan.customer?.center?.repaymentType?.toUpperCase() ||
+        'WEEKLY';
+      const scheduleStart = updated.firstDueDate
+        ? new Date(updated.firstDueDate)
+        : new Date(updated.sanctionDate || updated.createdAt);
+
+      await tx.loanSchedule.deleteMany({ where: { loanId: existingLoan.id } });
+      if (numDues > 0 && perDue > 0) {
+        await tx.loanSchedule.createMany({
+          data: buildScheduleRows(
+            updated.id,
+            numDues,
+            perDue,
+            scheduleStart,
+            packageFrequency,
+            lastEmi
+          ),
+        });
+      }
+    }
+
+    return updated;
+  });
+
   res.json(loan);
 });
 
@@ -356,8 +434,17 @@ export const deleteLoan = asyncHandler(async (req: Request, res: Response) => {
 export const getLoanLedger = asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params;
 
-  const loan = await prisma.loan.findUnique({ where: { id: String(id) } });
+  const loan = await prisma.loan.findUnique({
+    where: { id: String(id) },
+    include: { customer: { include: { area: true } } },
+  });
   if (!loan) return res.status(404).json({ error: 'Loan not found' });
+
+  const user = (req as any).user;
+  requireBranchAccess(user, loan.customer?.area?.branchId, 'view this loan ledger');
+  if (res.locals.areaIds?.length && loan.customer?.areaId && !res.locals.areaIds.includes(loan.customer.areaId)) {
+    return res.status(403).json({ error: 'Security Violation: loan is outside your area.' });
+  }
 
   const ledger = await prisma.loanLedger.findMany({
     where: { loanId: String(id) },

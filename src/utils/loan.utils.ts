@@ -104,10 +104,57 @@ export async function sumUnpaidScheduleAmount(tx: Tx, loanId: string): Promise<n
   return sumUnpaidFromSchedules(schedules);
 }
 
-export async function handleDroppedLoan(tx: Tx, loanId: string) {
+export async function handleDroppedLoan(
+  tx: Tx,
+  loanId: string,
+  customerId: string,
+  dropDate: Date = new Date()
+) {
   await tx.loanSchedule.deleteMany({
     where: { loanId, status: { in: UNPAID_SCHEDULE_STATUSES } },
   });
+
+  const lastLoanLedger = await tx.loanLedger.findFirst({
+    where: { loanId },
+    orderBy: { createdAt: 'desc' },
+  });
+  if (lastLoanLedger && lastLoanLedger.closingBalance > 0) {
+    await tx.loanLedger.create({
+      data: {
+        transactionType: 'Loan Dropped',
+        amount: lastLoanLedger.closingBalance,
+        openingBalance: lastLoanLedger.closingBalance,
+        closingBalance: 0,
+        remarks: 'Loan dropped — liability reversed',
+        loanId,
+        date: dropDate,
+      },
+    });
+  }
+
+  const disbEntry = await tx.customerLedger.findFirst({
+    where: { customerId, transactionType: 'Disbursement' },
+    orderBy: { createdAt: 'desc' },
+  });
+  if (disbEntry) {
+    const lastCustLedger = await tx.customerLedger.findFirst({
+      where: { customerId },
+      orderBy: { createdAt: 'desc' },
+    });
+    const custOpening = lastCustLedger?.closingBalance ?? 0;
+    await tx.customerLedger.create({
+      data: {
+        transactionType: 'Loan Dropped',
+        amount: disbEntry.amount,
+        openingBalance: custOpening,
+        closingBalance: Math.max(0, custOpening - disbEntry.amount),
+        remarks: 'Loan dropped — disbursement reversed',
+        customerId,
+        date: dropDate,
+      },
+    });
+  }
+
   await tx.loan.update({
     where: { id: loanId },
     data: { outstandingAmount: 0, advanceBalance: 0 },

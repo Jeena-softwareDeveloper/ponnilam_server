@@ -103,14 +103,14 @@ async function main() {
 
   await prisma.menu.upsert({
     where: { name: 'Centers' },
-    update: { parentId: null },
-    create: { name: 'Centers', path: '/admin/masters/centers', icon: 'MapPin' },
+    update: { parentId: mastersMenu.id },
+    create: { name: 'Centers', path: '/admin/masters/centers', icon: 'MapPin', parentId: mastersMenu.id },
   });
 
   await prisma.menu.upsert({
     where: { name: 'Groups' },
-    update: { parentId: null },
-    create: { name: 'Groups', path: '/admin/masters/groups', icon: 'Users' },
+    update: { parentId: mastersMenu.id },
+    create: { name: 'Groups', path: '/admin/masters/groups', icon: 'Users', parentId: mastersMenu.id },
   });
 
   await prisma.menu.upsert({
@@ -150,6 +150,7 @@ async function main() {
   });
 
   // 3. Create Admin Staff (One Admin)
+  const seedPassword = process.env.SEED_ADMIN_PASSWORD || require('crypto').randomBytes(8).toString('hex');
   const adminStaff = await prisma.staff.upsert({
     where: { phone: '9000000000' },
     update: {},
@@ -158,12 +159,21 @@ async function main() {
       username: 'admin',
       email: 'admin@financeos.com',
       phone: '9000000000',
-      password: await bcrypt.hash('password123', 10),
+      password: await bcrypt.hash(seedPassword, 10),
       isActive: true,
+      mustChangePassword: !process.env.SEED_ADMIN_PASSWORD,
       branchId: null,
       roleId: adminRole.id,
     },
   });
+
+  if (!process.env.SEED_ADMIN_PASSWORD) {
+    console.log('═══════════════════════════════════════════');
+    console.log('  Admin login — username: admin');
+    console.log(`  Temporary password: ${seedPassword}`);
+    console.log('  Change this password immediately after first login.');
+    console.log('═══════════════════════════════════════════');
+  }
 
   // 4. Map ALL Menus to Admin Staff
   const allMenus = await prisma.menu.findMany();

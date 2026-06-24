@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { LOAN_COLLECTIBLE_STATUSES, sumUnpaidScheduleAmount } from './loan.utils';
 import { LoanStatus, ScheduleStatus, UNPAID_SCHEDULE_STATUSES } from './prisma-enums';
 import { getDayRange } from './date.utils';
+import { nextTrnNumber } from './sequence.utils';
 
 type Tx = Prisma.TransactionClient;
 
@@ -14,13 +15,7 @@ type ScheduleRow = {
 };
 
 export async function getNextTrnNumber(tx: Tx): Promise<string> {
-  const entries = await tx.collection.findMany({ select: { trnNumber: true } });
-  let max = 0;
-  for (const entry of entries) {
-    const parsed = parseInt(String(entry.trnNumber).replace(/^TRN/i, ''), 10);
-    if (!isNaN(parsed) && parsed > max) max = parsed;
-  }
-  return `TRN${(max + 1).toString().padStart(6, '0')}`;
+  return nextTrnNumber(tx);
 }
 
 export async function allocateCollection(
@@ -92,7 +87,7 @@ export async function processLoanCollection(
   const { dayStart, dayEnd } = getDayRange(trnDate);
 
   const existing = await tx.collection.findFirst({
-    where: { loanId, trnDate: { gte: dayStart, lte: dayEnd } },
+    where: { loanId, trnDate: { gte: dayStart, lte: dayEnd }, isVoided: false },
   });
   if (existing) {
     return { collection: { id: existing.id, trnNumber: existing.trnNumber }, skipped: true, skipReason: 'Duplicate collection for this loan on the same date' };
@@ -212,4 +207,113 @@ export async function processLoanCollection(
   });
 
   return { collection: { id: collection.id, trnNumber: collection.trnNumber } };
+}
+
+/** Void a collection and replay remaining allocations to restore correct balances. */
+export async function voidCollection(
+  tx: Tx,
+  collectionId: string,
+  voidReason: string,
+  voidedById: string
+) {
+  const collection = await tx.collection.findUnique({
+    where: { id: collectionId },
+    include: { loan: { include: { customer: true, package: true } } },
+  });
+  if (!collection) throw new Error('Collection not found');
+  if (collection.isVoided) throw new Error('Collection is already voided');
+
+  const loan = collection.loan;
+  if (!loan) throw new Error('Loan not found for collection');
+
+  await tx.collection.update({
+    where: { id: collectionId },
+    data: {
+      isVoided: true,
+      voidedAt: new Date(),
+      voidReason,
+      voidedById,
+    },
+  });
+
+  await tx.loanSchedule.updateMany({
+    where: { loanId: loan.id },
+    data: {
+      status: ScheduleStatus.PENDING,
+      amountPaid: 0,
+      paidDate: null,
+      collectionId: null,
+    },
+  });
+
+  const activeCollections = await tx.collection.findMany({
+    where: { loanId: loan.id, isVoided: false },
+    orderBy: [{ trnDate: 'asc' }, { createdAt: 'asc' }],
+  });
+
+  let advanceBalance = 0;
+  for (const c of activeCollections) {
+    const schedules = await tx.loanSchedule.findMany({
+      where: { loanId: loan.id, status: { in: UNPAID_SCHEDULE_STATUSES } },
+      orderBy: { dueDate: 'asc' },
+    });
+    const pool = c.amount + advanceBalance;
+    advanceBalance = await allocateCollection(tx, loan.id, schedules, pool, c.trnDate, c.id);
+  }
+
+  const newOutstanding = await sumUnpaidScheduleAmount(tx, loan.id);
+  let newStatus: LoanStatus;
+  if (newOutstanding <= 0 && activeCollections.length > 0) {
+    newStatus = LoanStatus.CLOSED;
+  } else if (activeCollections.length === 0) {
+    newStatus = LoanStatus.APPROVED;
+  } else {
+    newStatus = LoanStatus.ACTIVE;
+  }
+
+  await tx.loan.update({
+    where: { id: loan.id },
+    data: {
+      outstandingAmount: Math.max(0, newOutstanding),
+      advanceBalance,
+      status: newStatus,
+    },
+  });
+
+  const lastCustomerLedger = await tx.customerLedger.findFirst({
+    where: { customerId: loan.customerId },
+    orderBy: { createdAt: 'desc' },
+  });
+  const customerOpening = lastCustomerLedger?.closingBalance ?? 0;
+  const customerClosing = customerOpening + collection.amount;
+
+  await tx.customerLedger.create({
+    data: {
+      transactionType: 'Collection Void',
+      amount: collection.amount,
+      openingBalance: customerOpening,
+      closingBalance: customerClosing,
+      remarks: voidReason,
+      customerId: loan.customerId,
+      date: new Date(),
+    },
+  });
+
+  const lastLoanLedger = await tx.loanLedger.findFirst({
+    where: { loanId: loan.id },
+    orderBy: { createdAt: 'desc' },
+  });
+  const loanOpening = lastLoanLedger?.closingBalance ?? loan.outstandingAmount;
+
+  await tx.loanLedger.create({
+    data: {
+      transactionType: 'Collection Void',
+      amount: collection.amount,
+      openingBalance: loanOpening,
+      closingBalance: Math.max(0, newOutstanding),
+      remarks: voidReason,
+      loanId: loan.id,
+      date: new Date(),
+    },
+  });
 }

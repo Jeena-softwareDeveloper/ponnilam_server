@@ -2,7 +2,7 @@ import prisma from '../../utils/prisma';
 import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { NotificationType, NotificationStatus } from '../../utils/prisma-enums';
-import { DEFAULT_RESET_PASSWORD } from '../../utils/auth.utils';
+import { generateTemporaryPassword } from '../../utils/auth.utils';
 import { isAdminUser } from '../../utils/user.utils';
 import { getNotificationById, listNotifications } from '../../utils/notification.utils';
 
@@ -65,12 +65,13 @@ export const approvePasswordReset = async (req: Request, res: Response): Promise
       return res.status(400).json({ error: 'No staff reference found' });
     }
 
-    const hashedPassword = await bcrypt.hash(DEFAULT_RESET_PASSWORD, 10);
+    const temporaryPassword = generateTemporaryPassword();
+    const hashedPassword = await bcrypt.hash(temporaryPassword, 10);
 
     await prisma.$transaction([
       prisma.staff.update({
         where: { id: notif.staffId },
-        data: { password: hashedPassword },
+        data: { password: hashedPassword, mustChangePassword: true },
       }),
       prisma.notification.update({
         where: { id: id as string },
@@ -86,7 +87,11 @@ export const approvePasswordReset = async (req: Request, res: Response): Promise
       }),
     ]);
 
-    return res.status(200).json({ success: true, message: 'Password reset to default.' });
+    return res.status(200).json({
+      success: true,
+      message: 'Password reset. Share the temporary password securely with the staff member.',
+      temporaryPassword,
+    });
   } catch (error) {
     console.error('Approve password reset error:', error);
     return res.status(500).json({ error: 'Internal server error' });

@@ -3,37 +3,11 @@ import { Request, Response } from 'express';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { requireBranchAccess } from '../../utils/security.utils';
 import { OPEN_LOAN_STATUSES } from '../../utils/prisma-enums';
-
-
-// Generate Customer Number with branch prefix (e.g., PON001 for branch "Ponnilam")
-const generateCustomerNo = async (branchId?: string) => {
-  let prefix = 'CUS'; // fallback prefix
-  if (branchId) {
-    const branch = await prisma.branch.findUnique({ where: { id: branchId } });
-    if (branch?.name) {
-      prefix = branch.name.trim().replace(/[^a-zA-Z]/g, '').substring(0, 3).toUpperCase();
-    }
-  }
-  
-  // FIX: Use transaction with lock to prevent race condition
-  const customerNo = await prisma.$transaction(async (tx) => {
-    const existing = await tx.customer.findMany({
-      where: { customerNo: { startsWith: prefix } },
-      orderBy: { customerNo: 'desc' },
-      take: 1,
-    });
-    let nextNo = 1;
-    if (existing.length > 0 && existing[0].customerNo) {
-      const lastNum = parseInt(existing[0].customerNo.replace(prefix, ''), 10);
-      if (!isNaN(lastNum)) nextNo = lastNum + 1;
-    }
-    return `${prefix}${nextNo.toString().padStart(3, '0')}`;
-  });
-  
-  return customerNo;
-};
+import { nextCustomerNo } from '../../utils/sequence.utils';
+import { parsePagination, paginatedResponse } from '../../utils/pagination.utils';
 
 export const createCustomer = asyncHandler(async (req: Request, res: Response) => {
+  try {
     const {
       general,
       coApplicant,
@@ -98,9 +72,9 @@ export const createCustomer = asyncHandler(async (req: Request, res: Response) =
       branchIdForNo = user.branchId;
     }
 
-    const customerNo = await generateCustomerNo(branchIdForNo);
-
-    const customer = await prisma.customer.create({
+    const customer = await prisma.$transaction(async (tx) => {
+      const customerNo = await nextCustomerNo(tx, branchIdForNo);
+      return tx.customer.create({
       data: {
         customerNo,
         name: general.name,
@@ -167,8 +141,17 @@ export const createCustomer = asyncHandler(async (req: Request, res: Response) =
         bank: true
       }
     });
+    });
 
     res.status(201).json(customer);
+  } catch (error: any) {
+    if (error.code === 'P2002') {
+      const target = error.meta?.target;
+      const field = Array.isArray(target) ? target[0] : 'field';
+      return res.status(409).json({ error: `A customer with this ${field} already exists.` });
+    }
+    throw error;
+  }
 });
 
 export const updateCustomer = asyncHandler(async (req: Request, res: Response) => {
@@ -374,18 +357,25 @@ export const getCustomers = asyncHandler(async (req: Request, res: Response) => 
       };
     }
 
-    const customers = await prisma.customer.findMany({
-      where,
-      include: {
-        area: true,
-        group: true,
-        employee: true,
-        center: true
-      },
-      orderBy: { createdAt: 'desc' }
-    });
+    const { page, limit, skip } = parsePagination(req.query as Record<string, string>);
 
-    res.json(customers);
+    const [customers, total] = await Promise.all([
+      prisma.customer.findMany({
+        where,
+        include: {
+          area: true,
+          group: true,
+          employee: true,
+          center: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      prisma.customer.count({ where }),
+    ]);
+
+    res.json(paginatedResponse(customers, total, page, limit));
 });
 
 export const getCustomerById = asyncHandler(async (req: Request, res: Response) => {
@@ -464,6 +454,7 @@ export const deleteCustomer = asyncHandler(async (req: Request, res: Response) =
     const customer = await prisma.customer.findUnique({
       where: { id: String(id) },
       include: {
+        area: true,
         loans: { select: { id: true, loanNumber: true, status: true, outstandingAmount: true } },
       },
     });
@@ -471,6 +462,9 @@ export const deleteCustomer = asyncHandler(async (req: Request, res: Response) =
     if (!customer) {
       return res.status(404).json({ error: 'Customer not found' });
     }
+
+    const user = (req as any).user;
+    requireBranchAccess(user, customer.area?.branchId, 'delete a customer from another branch');
 
     const openLoans = customer.loans.filter(
       (l) => l.outstandingAmount > 0 || OPEN_LOAN_STATUSES.includes(l.status as typeof OPEN_LOAN_STATUSES[number])

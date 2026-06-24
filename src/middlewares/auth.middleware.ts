@@ -40,7 +40,7 @@ export const authenticateToken = async (req: AuthRequest, res: Response, next: N
     req.user = {
       ...staff,
       // Strictly enforce branchId from the token if present, fallback to live DB value
-      branchId: decoded.branchId || staff.branchId || staff.area?.branchId || null
+      branchId: staff.branchId || staff.area?.branchId || null
     };
     next();
   } catch (error) {
@@ -55,7 +55,7 @@ export const branchScope = async (req: AuthRequest, res: Response, next: NextFun
     if (req.user?.branchId) {
       if (!req.query) (req as any).query = {};
       req.query.branchId = req.user.branchId;
-      if (req.method === 'POST' || req.method === 'PUT') {
+      if (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH') {
         if (!req.body) (req as any).body = {};
         req.body.branchId = req.user.branchId;
       }
@@ -63,7 +63,7 @@ export const branchScope = async (req: AuthRequest, res: Response, next: NextFun
     if (req.user?.areaId) {
       if (!req.query) (req as any).query = {};
       req.query.areaId = req.user.areaId;
-      if (req.method === 'POST' || req.method === 'PUT') {
+      if (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH') {
         if (!req.body) (req as any).body = {};
         req.body.areaId = req.user.areaId;
       }

@@ -4,8 +4,18 @@ import { LoanStatus, LOAN_COLLECTIBLE_STATUSES, UNPAID_SCHEDULE_STATUSES } from 
 
 // ─── Shared helpers ─────────────────────────────────────────────────────────
 
-function buildWhere(areaId?: string, branchId?: string) {
-  const validBranchId = branchId && branchId !== 'all' ? branchId : undefined;
+function buildWhere(req: Request, res: Response, areaId?: string, branchId?: string) {
+  const user = (req as any).user;
+  const areaIds = res.locals.areaIds as string[] | undefined;
+  if (areaIds?.length) {
+    const ids = areaId && areaIds.includes(areaId) ? [areaId] : areaIds;
+    return {
+      whereCustomer: { areaId: { in: ids } },
+      whereLoan: { customer: { areaId: { in: ids } } },
+      whereCollection: { loan: { customer: { areaId: { in: ids } } } },
+    };
+  }
+  const validBranchId = user?.branchId || (branchId && branchId !== 'all' ? branchId : undefined);
   const whereCustomer: any = areaId ? { areaId } : validBranchId ? { area: { branchId: validBranchId } } : {};
   const whereLoan: any = areaId ? { customer: { areaId } } : validBranchId ? { customer: { area: { branchId: validBranchId } } } : {};
   const whereCollection: any = areaId ? { loan: { customer: { areaId } } } : validBranchId ? { loan: { customer: { area: { branchId: validBranchId } } } } : {};
@@ -34,15 +44,17 @@ export const getDashboardKpis = async (req: Request, res: Response) => {
     const { areaId, branchId } = req.query as Record<string, string>;
     const user = (req as any).user;
     const activeBranchId = user?.branchId || branchId;
-    const { whereCustomer, whereLoan, whereCollection } = buildWhere(areaId, activeBranchId);
+    const { whereCustomer, whereLoan, whereCollection } = buildWhere(req, res, areaId, activeBranchId);
     const { todayStart, todayEnd, yesterdayStart, lastMonthEnd } = dateBoundaries();
 
     const openLoanStatuses = { in: LOAN_COLLECTIBLE_STATUSES };
+    const { thisMonthStart } = dateBoundaries();
     const [
       customersTotal, customersLastMonth,
       activeLoansTotal, activeLoansLastMonth,
-      outstandingTotal, outstandingLastMonth,
+      outstandingTotal,
       collectionToday, collectionYesterday,
+      collectionsThisMonth, disbursementsThisMonth,
       overdueCount
     ] = await Promise.all([
       prisma.customer.count({ where: whereCustomer }),
@@ -50,15 +62,24 @@ export const getDashboardKpis = async (req: Request, res: Response) => {
       prisma.loan.count({ where: { ...whereLoan, status: { in: LOAN_COLLECTIBLE_STATUSES } } }),
       prisma.loan.count({ where: { ...whereLoan, status: { in: LOAN_COLLECTIBLE_STATUSES }, createdAt: { lte: lastMonthEnd } } }),
       prisma.loan.aggregate({ where: { ...whereLoan, status: openLoanStatuses }, _sum: { outstandingAmount: true } }),
-      prisma.loan.aggregate({ where: { ...whereLoan, status: openLoanStatuses, createdAt: { lte: lastMonthEnd } }, _sum: { outstandingAmount: true } }),
-      prisma.collection.aggregate({ where: { ...whereCollection, trnDate: { gte: todayStart, lt: todayEnd } }, _sum: { amount: true } }),
-      prisma.collection.aggregate({ where: { ...whereCollection, trnDate: { gte: yesterdayStart, lt: todayStart } }, _sum: { amount: true } }),
+      prisma.collection.aggregate({ where: { ...whereCollection, trnDate: { gte: todayStart, lt: todayEnd }, isVoided: false }, _sum: { amount: true } }),
+      prisma.collection.aggregate({ where: { ...whereCollection, trnDate: { gte: yesterdayStart, lt: todayStart }, isVoided: false }, _sum: { amount: true } }),
+      prisma.collection.aggregate({ where: { ...whereCollection, trnDate: { gte: thisMonthStart }, isVoided: false }, _sum: { amount: true } }),
+      prisma.loan.aggregate({
+        where: { ...whereLoan, disbursementDate: { gte: thisMonthStart } },
+        _sum: { totalDueAmount: true },
+      }),
       prisma.loanSchedule.groupBy({
         by: ['loanId'],
         where: { loan: { ...whereLoan, status: openLoanStatuses }, status: { in: UNPAID_SCHEDULE_STATUSES }, dueDate: { lt: todayStart } },
         _count: { loanId: true }
       })
     ]);
+
+    const currentOutstanding = outstandingTotal._sum.outstandingAmount || 0;
+    const collectionsMonth = collectionsThisMonth._sum.amount || 0;
+    const disbursementsMonth = disbursementsThisMonth._sum.totalDueAmount || 0;
+    const previousOutstanding = Math.max(0, currentOutstanding - disbursementsMonth + collectionsMonth);
 
     res.json({
       totalCustomers: customersTotal,
@@ -67,8 +88,8 @@ export const getDashboardKpis = async (req: Request, res: Response) => {
       activeLoansTrend: calcTrend(activeLoansTotal, activeLoansLastMonth),
       todayCollection: collectionToday._sum.amount || 0,
       collectionTrend: calcTrend(collectionToday._sum.amount || 0, collectionYesterday._sum.amount || 0),
-      totalOutstanding: outstandingTotal._sum.outstandingAmount || 0,
-      outstandingTrend: calcTrend(outstandingTotal._sum.outstandingAmount || 0, outstandingLastMonth._sum.outstandingAmount || 0),
+      totalOutstanding: currentOutstanding,
+      outstandingTrend: calcTrend(currentOutstanding, previousOutstanding),
       overdueLoans: overdueCount.length,
     });
   } catch (err) {
@@ -84,7 +105,7 @@ export const getDashboardTrend = async (req: Request, res: Response) => {
     const { areaId, branchId } = req.query as Record<string, string>;
     const user = (req as any).user;
     const activeBranchId = user?.branchId || branchId;
-    const { whereCollection } = buildWhere(areaId, activeBranchId);
+    const { whereCollection } = buildWhere(req, res, areaId, activeBranchId);
     const { now, thisMonthStart } = dateBoundaries();
 
     const rows = await prisma.collection.findMany({
@@ -117,7 +138,7 @@ export const getDashboardCharts = async (req: Request, res: Response) => {
     const { areaId, branchId } = req.query as Record<string, string>;
     const user = (req as any).user;
     const activeBranchId = user?.branchId || branchId;
-    const { whereLoan, whereCollection } = buildWhere(areaId, activeBranchId);
+    const { whereLoan, whereCollection } = buildWhere(req, res, areaId, activeBranchId);
     const { todayStart, thisMonthStart } = dateBoundaries();
 
     const [activeLoans, closedLoans, overdueGroups, branches] = await Promise.all([
@@ -173,7 +194,7 @@ export const getDashboardActivity = async (req: Request, res: Response) => {
     const { areaId, branchId } = req.query as Record<string, string>;
     const user = (req as any).user;
     const activeBranchId = user?.branchId || branchId;
-    const { whereLoan } = buildWhere(areaId, activeBranchId);
+    const { whereLoan } = buildWhere(req, res, areaId, activeBranchId);
     const { now, todayStart } = dateBoundaries();
 
     const [recentLoans, overdueSchedules] = await Promise.all([

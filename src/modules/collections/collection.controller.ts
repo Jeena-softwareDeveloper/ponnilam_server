@@ -2,10 +2,11 @@ import prisma from '../../utils/prisma';
 import { Request, Response } from 'express';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { requireBranchAccess } from '../../utils/security.utils';
-import { getNextTrnNumber, processLoanCollection } from '../../utils/collection.utils';
+import { getNextTrnNumber, processLoanCollection, voidCollection } from '../../utils/collection.utils';
 import { LOAN_COLLECTIBLE_STATUSES } from '../../utils/prisma-enums';
 import { getDayRange, getDateRangeBounds } from '../../utils/date.utils';
 import { isAdminUser } from '../../utils/user.utils';
+import { parsePagination, paginatedResponse } from '../../utils/pagination.utils';
 
 export const createCollection = asyncHandler(async (req: Request, res: Response) => {
   const { loanId, staffId, amount, trnDate, remarks } = req.body;
@@ -15,6 +16,9 @@ export const createCollection = asyncHandler(async (req: Request, res: Response)
   }
   if (Number(amount) <= 0) {
     return res.status(400).json({ error: 'Amount must be greater than zero' });
+  }
+  if (!trnDate || isNaN(new Date(trnDate).getTime())) {
+    return res.status(400).json({ error: 'Valid transaction date is required' });
   }
 
   const user = (req as any).user;
@@ -58,8 +62,9 @@ export const createCollection = asyncHandler(async (req: Request, res: Response)
 });
 
 export const getCollections = asyncHandler(async (req: Request, res: Response) => {
-  const { loanId, staffId, branchId, centerId, trnDate, areaId, fromDate, toDate } = req.query;
+  const { loanId, staffId, branchId, centerId, trnDate, areaId, fromDate, toDate, includeVoided } = req.query;
   const where: any = {};
+  if (includeVoided !== 'true') where.isVoided = false;
   if (loanId) where.loanId = String(loanId);
   if (staffId) where.staffId = String(staffId);
 
@@ -94,19 +99,52 @@ export const getCollections = asyncHandler(async (req: Request, res: Response) =
     );
   }
 
-  const collections = await prisma.collection.findMany({
-    where,
-    include: {
-      loan: {
-        include: {
-          customer: { include: { area: { include: { branch: true } } } },
-          schedules: { orderBy: { dueDate: 'asc' } },
+  const { page, limit, skip } = parsePagination(req.query as Record<string, string>);
+
+  const [collections, total] = await Promise.all([
+    prisma.collection.findMany({
+      where,
+      include: {
+        loan: {
+          include: {
+            customer: { include: { area: { include: { branch: true } } } },
+            schedules: { orderBy: { dueDate: 'asc' } },
+          },
         },
+        staff: true,
       },
-      staff: true,
-    },
-    orderBy: { trnDate: 'desc' },
+      orderBy: { trnDate: 'desc' },
+      skip,
+      take: limit,
+    }),
+    prisma.collection.count({ where }),
+  ]);
+
+  res.json(paginatedResponse(collections, total, page, limit));
+});
+
+export const voidCollectionEntry = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { reason } = req.body;
+  if (!reason?.trim()) return res.status(400).json({ error: 'Void reason is required' });
+
+  const user = (req as any).user;
+  const existing = await prisma.collection.findUnique({
+    where: { id: String(id) },
+    include: { loan: { include: { customer: { include: { area: true } } } } },
+  });
+  if (!existing) return res.status(404).json({ error: 'Collection not found' });
+  if (existing.isVoided) return res.status(400).json({ error: 'Collection is already voided' });
+
+  requireBranchAccess(user, existing.loan?.customer?.area?.branchId, 'void a collection outside your branch');
+
+  await prisma.$transaction(async (tx) => {
+    await voidCollection(tx, String(id), reason.trim(), user.id);
   });
 
-  res.json(collections);
+  const updated = await prisma.collection.findUnique({
+    where: { id: String(id) },
+    include: { loan: true, staff: true },
+  });
+  res.json(updated);
 });

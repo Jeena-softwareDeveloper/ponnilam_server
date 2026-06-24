@@ -17,6 +17,11 @@ export const getAuditLogs = asyncHandler(async (req: Request, res: Response) => 
 
   const where: any = {};
 
+  const user = (req as any).user;
+  if (user?.role?.name !== 'Admin' && user?.branchId) {
+    where.staff = { branchId: user.branchId };
+  }
+
   if (staffId) where.staffId = staffId;
   if (action) where.action = action;
   if (entity) where.entity = entity;

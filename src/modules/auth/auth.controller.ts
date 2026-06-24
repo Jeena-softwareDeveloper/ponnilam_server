@@ -33,19 +33,17 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
     return res.status(403).json({ error: 'Account is inactive' });
   }
 
-  // Compare passwords
-  let isMatch = false;
-  let isFirstLogin = false;
-  if (staff.password.startsWith('$2b$') || staff.password.startsWith('$2a$')) {
-    isMatch = await bcrypt.compare(password, staff.password);
-    isFirstLogin = (await bcrypt.compare(staff.username || '', staff.password)) || (await bcrypt.compare(staff.phone || '', staff.password));
-  } else {
-    isMatch = (password === staff.password);
-    isFirstLogin = (staff.password === staff.username) || (staff.password === staff.phone);
+  // Compare passwords (bcrypt only — no plaintext fallback)
+  if (!staff.password.startsWith('$2b$') && !staff.password.startsWith('$2a$')) {
+    return res.status(401).json({ error: 'Invalid credentials' });
   }
 
+  const isMatch = await bcrypt.compare(password, staff.password);
+  const isFirstLogin =
+    (staff.username && (await bcrypt.compare(staff.username, staff.password))) ||
+    (staff.phone && (await bcrypt.compare(staff.phone, staff.password)));
+
   if (!isMatch) {
-    console.log("Login failed!", { username, password, isMatch, staffPass: staff.password, isFirstLogin });
     return res.status(401).json({ error: 'Invalid credentials' });
   }
 
@@ -63,7 +61,7 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
       { expiresIn: '1d' }
     );
 
-  if (isFirstLogin) {
+  if (isFirstLogin || staff.mustChangePassword) {
     return res.status(200).json({
       message: 'Password change required',
       forcePasswordChange: true,
@@ -179,7 +177,7 @@ export const changePassword = asyncHandler(async (req: Request, res: Response) =
   const hashedPassword = await bcrypt.hash(newPassword, 10);
   await prisma.staff.update({
     where: { id: user.id },
-    data: { password: hashedPassword }
+    data: { password: hashedPassword, mustChangePassword: false },
   });
 
   return res.status(200).json({ message: 'Password updated successfully' });
@@ -200,6 +198,17 @@ export const forgotPassword = asyncHandler(async (req: Request, res: Response) =
   });
 
   if (!staff) {
+    return res.status(200).json({ message: 'If the username exists, a reset request has been sent to the admin.' });
+  }
+
+  const pending = await prisma.notification.findFirst({
+    where: {
+      staffId: staff.id,
+      type: NotificationType.PASSWORD_RESET,
+      status: NotificationStatus.PENDING,
+    },
+  });
+  if (pending) {
     return res.status(200).json({ message: 'If the username exists, a reset request has been sent to the admin.' });
   }
 

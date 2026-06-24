@@ -1,9 +1,21 @@
 import { Request, Response } from 'express';
 import prisma from '../../utils/prisma';
 import { LOAN_COLLECTIBLE_STATUSES, UNPAID_SCHEDULE_STATUSES } from '../../utils/prisma-enums';
+import { sumUnpaidFromSchedules } from '../../utils/loan.utils';
 import { getDateRangeBounds, getDayRange } from '../../utils/date.utils';
 
-// Helper: build date range
+// Helper: apply branch/area scope from middleware
+const scopeCustomerFilter = (req: Request, res: Response, base: any = {}) => {
+  const areaIds = res.locals.areaIds as string[] | undefined;
+  if (areaIds?.length) {
+    return { ...base, areaId: { in: areaIds } };
+  }
+  const user = (req as any).user;
+  if (user?.branchId) {
+    return { ...base, area: { branchId: user.branchId } };
+  }
+  return base;
+};
 const buildDateWhere = (startDate?: string, endDate?: string, type?: string) => {
   if (startDate && endDate) {
     return getDateRangeBounds(startDate, endDate);
@@ -68,7 +80,11 @@ export const getCenterDetailReport = async (req: Request, res: Response) => {
       where.employeeId = staffId;
     }
     
-    if (userBranchId) {
+    if (res.locals.areaIds?.length) {
+      where.areaId = areaId && (res.locals.areaIds as string[]).includes(areaId)
+        ? areaId
+        : { in: res.locals.areaIds };
+    } else if (userBranchId) {
       where.area = { ...where.area, branchId: userBranchId, ...(areaId ? { id: areaId } : {}) };
     } else if (areaId) {
       where.areaId = areaId;
@@ -85,7 +101,12 @@ export const getCenterDetailReport = async (req: Request, res: Response) => {
           include: {
             loans: {
               where: { status: { in: LOAN_COLLECTIBLE_STATUSES } },
-              select: { outstandingAmount: true, perDueAmount: true, status: true }
+              select: {
+                outstandingAmount: true,
+                perDueAmount: true,
+                status: true,
+                schedules: { where: { status: { in: UNPAID_SCHEDULE_STATUSES } } },
+              }
             }
           }
         }
@@ -97,7 +118,8 @@ export const getCenterDetailReport = async (req: Request, res: Response) => {
       const activeLoans = center.customers.flatMap(c => c.loans);
       const totalOutstanding = activeLoans.reduce((sum, l) => sum + l.outstandingAmount, 0);
       const expectedCollection = activeLoans.reduce((sum, l) => {
-        const due = Math.min(l.outstandingAmount, l.perDueAmount);
+        const scheduleDue = sumUnpaidFromSchedules(l.schedules || []);
+        const due = scheduleDue > 0 ? scheduleDue : Math.min(l.outstandingAmount, l.perDueAmount);
         return sum + due;
       }, 0);
       return {
@@ -174,7 +196,9 @@ export const getEmployeeWiseReport = async (req: Request, res: Response) => {
     const userBranchId = user?.branchId;
 
     const where: any = { trnDate: dateWhere };
-    if (userBranchId) {
+    if (res.locals.areaIds?.length) {
+      where.loan = { customer: { areaId: { in: res.locals.areaIds } } };
+    } else if (userBranchId) {
       where.loan = { customer: { area: { branchId: userBranchId } } };
     } else if (branchId && branchId !== 'all') {
       where.loan = { customer: { area: { branchId } } };
@@ -227,7 +251,9 @@ export const getAreaDueReport = async (req: Request, res: Response) => {
 
     const loanWhere: any = { status: { in: LOAN_COLLECTIBLE_STATUSES } };
     
-    if (areaId) {
+    if (res.locals.areaIds?.length) {
+      loanWhere.customer = { areaId: areaId ? areaId : { in: res.locals.areaIds } };
+    } else if (areaId) {
       if (userBranchId) {
         loanWhere.customer = { areaId, area: { branchId: userBranchId } };
       } else {
@@ -269,11 +295,7 @@ export const getAreaDueReport = async (req: Request, res: Response) => {
       }
       const entry = areaMap.get(area.id)!;
       entry.totalLoans += 1;
-      const scheduleOutstanding = loan.schedules.reduce(
-        (sum: number, s: any) => sum + (s.emiAmount - (s.amountPaid || 0)),
-        0
-      );
-      entry.totalOutstanding += scheduleOutstanding > 0 ? scheduleOutstanding : loan.outstandingAmount;
+      entry.totalOutstanding += loan.outstandingAmount;
       if (loan.schedules.length > 0) {
         entry.overdueLoans += 1;
         entry.overdueAmount += loan.schedules.reduce((sum: number, s: any) => sum + (s.emiAmount - s.amountPaid), 0);
@@ -327,7 +349,13 @@ export const getPartyAmountReport = async (req: Request, res: Response) => {
 
     const where: any = { trnDate: buildDateWhere(startDate, endDate, type) };
 
-    if (userBranchId) {
+    if (res.locals.areaIds?.length) {
+      where.loan = {
+        customer: { areaId: { in: res.locals.areaIds } },
+        ...(resolvedCustomerId ? { customerId: resolvedCustomerId } : {}),
+      };
+      if (resolvedLoanId) where.loanId = resolvedLoanId;
+    } else if (userBranchId) {
       where.loan = {
         customer: { area: { branchId: userBranchId } },
         ...(resolvedCustomerId ? { customerId: resolvedCustomerId } : {}),

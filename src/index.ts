@@ -24,6 +24,7 @@ import auditLogRoutes from './modules/auditLogs/auditLog.routes';
 
 // Import Middlewares
 import { authenticateToken, branchScope } from './middlewares/auth.middleware';
+import { requireAdmin } from './middlewares/admin.middleware';
 import { auditMiddleware } from './middlewares/audit.middleware';
 import { errorHandler } from './middlewares/error.middleware';
 
@@ -34,7 +35,7 @@ if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
   console.error('FATAL: JWT_SECRET environment variable is not set. Refusing to start.');
   process.exit(1);
 } else if (!process.env.JWT_SECRET) {
-  console.warn('WARNING: JWT_SECRET is not set. Using an insecure fallback. Set JWT_SECRET in .env before deploying.');
+  console.warn('WARNING: JWT_SECRET is not set. API requests will fail until it is configured in .env');
 }
 
 const app = express();
@@ -72,16 +73,16 @@ app.use('/api/v1/masters', authenticateToken);
 app.use('/api/v1/masters', branchScope);
 
 // Apply specific routes and audit logs
+app.use('/api/v1/masters/branches', requireAdmin, auditMiddleware('Branch'), branchRoutes);
+app.use('/api/v1/masters/states', requireAdmin, auditMiddleware('State'), stateRoutes);
+app.use('/api/v1/masters/districts', requireAdmin, auditMiddleware('District'), districtRoutes);
+app.use('/api/v1/masters/roles', requireAdmin, auditMiddleware('Role'), roleRoutes);
+app.use('/api/v1/masters/menus', requireAdmin, auditMiddleware('Menu'), menuRoutes);
+app.use('/api/v1/masters/loan-packages', auditMiddleware('LoanPackage'), loanPackageRoutes);
 app.use('/api/v1/masters/centers', auditMiddleware('Center'), centerRoutes);
 app.use('/api/v1/masters/groups', auditMiddleware('Group'), groupRoutes);
 app.use('/api/v1/masters/areas', auditMiddleware('Area'), areaRoutes);
-app.use('/api/v1/masters/branches', auditMiddleware('Branch'), branchRoutes);
-app.use('/api/v1/masters/states', auditMiddleware('State'), stateRoutes);
-app.use('/api/v1/masters/districts', auditMiddleware('District'), districtRoutes);
-app.use('/api/v1/masters/roles', auditMiddleware('Role'), roleRoutes);
 app.use('/api/v1/masters/staffs', auditMiddleware('Staff'), staffRoutes);
-app.use('/api/v1/masters/menus', auditMiddleware('Menu'), menuRoutes);
-app.use('/api/v1/masters/loan-packages', auditMiddleware('LoanPackage'), loanPackageRoutes);
 
 // Customer Routes (Can be under /customers directly or /masters/customers)
 // The prompt implies it's a new Phase, so we can group it under /customers
@@ -93,7 +94,7 @@ app.use('/api/v1/collections', authenticateToken, branchScope, auditMiddleware('
 app.use('/api/v1/reports', authenticateToken, branchScope, auditMiddleware('Report'), reportRoutes);
 app.use('/api/v1/dashboard', authenticateToken, branchScope, dashboardRoutes);
 app.use('/api/v1/notifications', authenticateToken, notificationRoutes);
-app.use('/api/v1/audit-logs', authenticateToken, auditLogRoutes);
+app.use('/api/v1/audit-logs', authenticateToken, branchScope, auditLogRoutes);
 
 // Health check
 app.get('/health', (req, res) => {
