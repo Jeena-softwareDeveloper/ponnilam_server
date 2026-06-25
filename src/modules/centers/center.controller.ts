@@ -425,3 +425,101 @@ export const getCenterCollectionSheet = async (req: Request, res: Response): Pro
     return res.status(500).json({ error: 'Internal server error' });
   }
 };
+
+function parseGroupIndex(name: string): number {
+  const match = name.match(/(\d+)/);
+  return match ? parseInt(match[1], 10) : 999;
+}
+
+/** Group loan joint liability print data — members grouped by G1, G2, … */
+export const getCenterJointLiabilitySheet = async (req: Request, res: Response): Promise<any> => {
+  try {
+    const centerId = String(req.params.id);
+    const { groupId } = req.query;
+
+    const center = await prisma.center.findUnique({
+      where: { id: centerId },
+      include: {
+        area: { include: { branch: true } },
+        groups: { orderBy: { groupName: 'asc' } },
+        customers: {
+          where: {
+            centerMemberType: { not: 'IMPORT' },
+            ...(groupId ? { groupId: String(groupId) } : {}),
+          },
+          include: {
+            coApplicant: true,
+            group: true,
+          },
+          orderBy: { createdAt: 'asc' },
+        },
+      },
+    });
+
+    if (!center) return res.status(404).json({ error: 'Center not found' });
+
+    const user = (req as any).user;
+    if (user?.role?.name !== 'Admin' && user?.branchId) {
+      if (center.area?.branchId !== user.branchId) {
+        return res.status(403).json({ error: 'Security Violation: center is outside your branch.' });
+      }
+    }
+
+    const sortedGroups = [...center.groups].sort(
+      (a, b) => parseGroupIndex(a.groupName) - parseGroupIndex(b.groupName)
+    );
+
+    const groupsPayload = (groupId
+      ? sortedGroups.filter((g) => g.id === String(groupId))
+      : sortedGroups
+    ).map((g, idx) => ({
+      id: g.id,
+      groupName: g.groupName,
+      shortLabel: g.groupCode || `G${parseGroupIndex(g.groupName) || idx + 1}`,
+      customers: center.customers
+        .filter((c) => c.groupId === g.id)
+        .map((c) => ({
+          id: c.id,
+          name: c.name,
+          customerNo: c.customerNo,
+          coApplicantName: c.coApplicant?.name || '',
+        })),
+    }));
+
+    const unassigned = center.customers.filter((c) => !c.groupId);
+    if (unassigned.length > 0 && !groupId) {
+      groupsPayload.push({
+        id: '_unassigned',
+        groupName: 'Unassigned',
+        shortLabel: 'G0',
+        customers: unassigned.map((c) => ({
+          id: c.id,
+          name: c.name,
+          customerNo: c.customerNo,
+          coApplicantName: c.coApplicant?.name || '',
+        })),
+      });
+    }
+
+    const branch = center.area?.branch;
+    return res.status(200).json({
+      center: {
+        id: center.id,
+        name: center.name,
+        code: center.code,
+      },
+      branch: branch
+        ? {
+            name: branch.name,
+            location: branch.location,
+            phone: branch.phone,
+          }
+        : null,
+      groups: groupsPayload,
+      printedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Error fetching joint liability sheet:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+};
