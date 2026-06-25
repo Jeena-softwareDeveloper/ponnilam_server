@@ -151,17 +151,23 @@ async function main() {
 
   // 3. Create Admin Staff (One Admin)
   const seedPassword = process.env.SEED_ADMIN_PASSWORD || require('crypto').randomBytes(8).toString('hex');
+  const hashedPassword = await bcrypt.hash(seedPassword, 10);
+  const mustChangePassword = !process.env.SEED_ADMIN_PASSWORD;
+
   const adminStaff = await prisma.staff.upsert({
     where: { phone: '9000000000' },
-    update: {},
+    update: {
+      password: hashedPassword,
+      mustChangePassword: mustChangePassword,
+    },
     create: {
       name: 'Admin System',
       username: 'admin',
       email: 'admin@financeos.com',
       phone: '9000000000',
-      password: await bcrypt.hash(seedPassword, 10),
+      password: hashedPassword,
       isActive: true,
-      mustChangePassword: !process.env.SEED_ADMIN_PASSWORD,
+      mustChangePassword: mustChangePassword,
       branchId: null,
       roleId: adminRole.id,
     },

@@ -51,6 +51,16 @@ export const updateArea = async (req: Request, res: Response): Promise<any> => {
       }
     }
 
+    if (branchId !== undefined && branchId !== existingArea.branchId) {
+      const dependents = await prisma.$transaction([
+        prisma.center.count({ where: { areaId: id } }),
+        prisma.customer.count({ where: { areaId: id } }),
+      ]);
+      if (dependents[0] > 0 || dependents[1] > 0) {
+        return res.status(400).json({ error: 'Cannot reassign area to another branch while it has centers or customers' });
+      }
+    }
+
     const area = await prisma.area.update({
       where: { id },
       data: {

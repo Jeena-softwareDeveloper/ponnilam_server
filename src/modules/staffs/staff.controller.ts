@@ -16,11 +16,71 @@ function withoutPassword<T extends { password?: string }>(staff: T) {
   return safe;
 }
 
+function normalizeStaffPhone(phone: string): string {
+  return String(phone || '').trim().replace(/\D/g, '');
+}
+
+function normalizeStaffEmail(email?: string | null): string | null {
+  const trimmed = String(email || '').trim();
+  if (!trimmed) return null;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+    return '__INVALID__';
+  }
+  return trimmed.toLowerCase();
+}
+
+function duplicateStaffMessage(target: string[] | undefined): string {
+  const field = (target?.[0] || '').toLowerCase();
+  if (field.includes('phone')) return 'This phone number is already registered to another staff member';
+  if (field.includes('email')) return 'This email is already registered to another staff member';
+  if (field.includes('username')) return 'This username is already taken by another staff member';
+  return 'Phone, email, or username already exists';
+}
+
+async function assertStaffFieldsUnique(
+  data: { phone: string; email: string | null; username: string | null },
+  excludeId?: string
+): Promise<string | null> {
+  const notSelf = excludeId ? { id: { not: excludeId } } : {};
+
+  const phoneMatch = await prisma.staff.findFirst({
+    where: { ...notSelf, phone: data.phone },
+    select: { name: true },
+  });
+  if (phoneMatch) {
+    return `Phone ${data.phone} is already registered to "${phoneMatch.name}"`;
+  }
+
+  if (data.email) {
+    const emailMatch = await prisma.staff.findFirst({
+      where: { ...notSelf, email: data.email },
+      select: { name: true },
+    });
+    if (emailMatch) {
+      return `Email "${data.email}" is already registered to "${emailMatch.name}"`;
+    }
+  }
+
+  if (data.username) {
+    const usernameMatch = await prisma.staff.findFirst({
+      where: { ...notSelf, username: data.username },
+      select: { name: true },
+    });
+    if (usernameMatch) {
+      return `Username "${data.username}" is already used by "${usernameMatch.name}"`;
+    }
+  }
+
+  return null;
+}
+
 function handleStaffError(res: Response, error: any) {
   if (error instanceof StaffSecurityError) {
     return res.status(error.status).json({ error: error.message });
   }
-  if (error.code === 'P2002') return res.status(409).json({ error: 'Phone or email already exists' });
+  if (error.code === 'P2002') {
+    return res.status(409).json({ error: duplicateStaffMessage(error.meta?.target) });
+  }
   if (error.code === 'P2025') return res.status(404).json({ error: 'Staff not found' });
   if (error.code === 'P2003') return res.status(400).json({ error: 'Cannot delete staff because it has associated records' });
   console.error('Staff error:', error);
@@ -69,6 +129,24 @@ export const createStaff = async (req: Request, res: Response): Promise<any> => 
     if (!name || !phone) return res.status(400).json({ error: 'Name and phone are required' });
     if (!roleId) return res.status(400).json({ error: 'Role is required' });
 
+    const normalizedPhone = normalizeStaffPhone(phone);
+    if (!/^\d{10}$/.test(normalizedPhone)) {
+      return res.status(400).json({ error: 'Enter a valid 10-digit phone number' });
+    }
+
+    const normalizedEmail = normalizeStaffEmail(email);
+    if (normalizedEmail === '__INVALID__') {
+      return res.status(400).json({ error: 'Enter a valid email address (e.g. staff@example.com) or leave email empty' });
+    }
+
+    const normalizedUsername = username?.trim() || null;
+    const duplicateErr = await assertStaffFieldsUnique({
+      phone: normalizedPhone,
+      email: normalizedEmail,
+      username: normalizedUsername,
+    });
+    if (duplicateErr) return res.status(409).json({ error: duplicateErr });
+
     await assertRoleAssignmentAllowed(user, roleId);
     const scoped = enforceStaffBranchOnCreate(user, { branchId, areaId });
     branchId = scoped.branchId;
@@ -101,9 +179,9 @@ export const createStaff = async (req: Request, res: Response): Promise<any> => 
     const staff = await prisma.staff.create({
       data: {
         name,
-        username: username || null,
-        phone,
-        email: email || null,
+        username: normalizedUsername,
+        phone: normalizedPhone,
+        email: normalizedEmail,
         areaId: areaId || null,
         branchId: branchId || null,
         roleId,
@@ -135,6 +213,31 @@ export const updateStaff = async (req: Request, res: Response): Promise<any> => 
       await assertRoleAssignmentAllowed(user, roleId);
     }
 
+    const normalizedPhone = phone !== undefined ? normalizeStaffPhone(phone) : undefined;
+    if (normalizedPhone !== undefined && !/^\d{10}$/.test(normalizedPhone)) {
+      return res.status(400).json({ error: 'Enter a valid 10-digit phone number' });
+    }
+
+    let normalizedEmail: string | null | undefined;
+    if (email !== undefined) {
+      normalizedEmail = normalizeStaffEmail(email);
+      if (normalizedEmail === '__INVALID__') {
+        return res.status(400).json({ error: 'Enter a valid email address (e.g. staff@example.com) or leave email empty' });
+      }
+    }
+
+    const normalizedUsername = username !== undefined ? (username?.trim() || null) : undefined;
+
+    const duplicateErr = await assertStaffFieldsUnique(
+      {
+        phone: normalizedPhone ?? existing.phone,
+        email: normalizedEmail !== undefined ? normalizedEmail : existing.email,
+        username: normalizedUsername !== undefined ? normalizedUsername : existing.username,
+      },
+      id
+    );
+    if (duplicateErr) return res.status(409).json({ error: duplicateErr });
+
     if (!isAdminUser(user)) {
       if (branchId !== undefined && branchId !== user.branchId) {
         return res.status(403).json({ error: 'Cannot move staff to another branch' });
@@ -149,9 +252,9 @@ export const updateStaff = async (req: Request, res: Response): Promise<any> => 
 
     const updateData: any = {
       ...(name !== undefined && { name }),
-      ...(username !== undefined && { username: username || null }),
-      ...(phone !== undefined && { phone }),
-      ...(email !== undefined && { email: email || null }),
+      ...(normalizedUsername !== undefined && { username: normalizedUsername }),
+      ...(normalizedPhone !== undefined && { phone: normalizedPhone }),
+      ...(normalizedEmail !== undefined && { email: normalizedEmail }),
       ...(areaId !== undefined && { areaId: areaId || null }),
       ...(branchId !== undefined && isAdminUser(user) && { branchId: branchId || null }),
       ...(roleId !== undefined && roleId && { roleId }),

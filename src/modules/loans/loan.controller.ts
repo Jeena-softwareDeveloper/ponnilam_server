@@ -2,7 +2,6 @@ import prisma from '../../utils/prisma';
 import { Request, Response } from 'express';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { requireBranchAccess } from '../../utils/security.utils';
-import { isAdminUser } from '../../utils/user.utils';
 import {
   buildScheduleRows,
   handleDroppedLoan,
@@ -13,6 +12,7 @@ import {
 import { LoanStatus, OPEN_LOAN_STATUSES } from '../../utils/prisma-enums';
 import { nextLoanNumber } from '../../utils/sequence.utils';
 import { parsePagination, paginatedResponse } from '../../utils/pagination.utils';
+import { assertMenuPermission, checkAreaScope, resolveStaffId } from '../../utils/validation.helpers';
 
 export const createLoan = asyncHandler(async (req: Request, res: Response) => {
   const {
@@ -30,6 +30,9 @@ export const createLoan = asyncHandler(async (req: Request, res: Response) => {
   if (!noOfDues || Number(noOfDues) <= 0) return res.status(400).json({ error: 'Number of dues is required' });
 
   const user = (req as any).user;
+  const createPerm = await assertMenuPermission(user, '/admin/loans', 'canCreate');
+  if (createPerm) return res.status(403).json({ error: createPerm });
+
   const customer = await prisma.customer.findUnique({
     where: { id: customerId },
     include: { area: true, center: true },
@@ -37,6 +40,12 @@ export const createLoan = asyncHandler(async (req: Request, res: Response) => {
   if (!customer) return res.status(404).json({ error: 'Customer not found' });
   if (!customer.isActive) return res.status(400).json({ error: 'Cannot create loan for inactive customer' });
   requireBranchAccess(user, customer.area?.branchId, 'create a loan for a customer outside your branch');
+  const areaScopeErr = checkAreaScope(user, res.locals.areaIds, customer.areaId);
+  if (areaScopeErr) return res.status(403).json({ error: areaScopeErr });
+
+  const staffResult = await resolveStaffId(staffId, user);
+  if ('error' in staffResult) return res.status(400).json({ error: staffResult.error });
+  const resolvedStaffId = staffResult.staffId;
 
   if (!packageId) {
     return res.status(400).json({ error: 'Loan package is required' });
@@ -77,7 +86,7 @@ export const createLoan = asyncHandler(async (req: Request, res: Response) => {
       data: {
         loanNumber,
         customerId,
-        staffId,
+        staffId: resolvedStaffId,
         amount: Number(amount),
         interestRate: resolvedInterestRate,
         noOfDues: numDues,
@@ -142,21 +151,16 @@ export const updateLoanStatus = asyncHandler(async (req: Request, res: Response)
 
   const user = (req as any).user;
   requireBranchAccess(user, existingLoan.customer?.area?.branchId, 'update a loan for a customer outside your branch');
+  const areaScopeErr = checkAreaScope(user, res.locals.areaIds, existingLoan.customer?.areaId);
+  if (areaScopeErr) return res.status(403).json({ error: areaScopeErr });
 
   if (!isValidLoanTransition(existingLoan.status, status)) {
     return res.status(400).json({ error: `Cannot change loan status from ${existingLoan.status} to ${status}` });
   }
 
-  const approvingStatuses: LoanStatus[] = [LoanStatus.APPROVED, LoanStatus.ACTIVE];
-  if (approvingStatuses.includes(status as LoanStatus) && existingLoan.status !== status) {
-    if (!isAdminUser(user)) {
-      const staffMenu = await prisma.staffMenu.findFirst({
-        where: { staffId: user.id, menu: { path: '/admin/loans' } },
-      });
-      if (!staffMenu?.canEdit) {
-        return res.status(403).json({ error: 'You do not have permission to approve loans.' });
-      }
-    }
+  if (existingLoan.status !== status) {
+    const editPerm = await assertMenuPermission(user, '/admin/loans', 'canEdit');
+    if (editPerm) return res.status(403).json({ error: editPerm });
   }
 
   const loan = await prisma.$transaction(async (tx) => {
@@ -319,9 +323,8 @@ export const getLoanById = asyncHandler(async (req: Request, res: Response) => {
 
   const user = (req as any).user;
   requireBranchAccess(user, loan.customer?.area?.branchId, 'view this loan');
-  if (res.locals.areaIds?.length && loan.customer?.areaId && !res.locals.areaIds.includes(loan.customer.areaId)) {
-    return res.status(403).json({ error: 'Security Violation: loan is outside your area.' });
-  }
+  const areaScopeErr = checkAreaScope(user, res.locals.areaIds, loan.customer?.areaId);
+  if (areaScopeErr) return res.status(403).json({ error: areaScopeErr });
 
   res.json(loan);
 });
@@ -341,9 +344,23 @@ export const updateLoanFinancial = asyncHandler(async (req: Request, res: Respon
 
   const user = (req as any).user;
   requireBranchAccess(user, existingLoan.customer?.area?.branchId, 'update a loan outside your branch');
+  const areaScopeErr = checkAreaScope(user, res.locals.areaIds, existingLoan.customer?.areaId);
+  if (areaScopeErr) return res.status(403).json({ error: areaScopeErr });
+  const editPerm = await assertMenuPermission(user, '/admin/loans', 'canEdit');
+  if (editPerm) return res.status(403).json({ error: editPerm });
 
   if (existingLoan.status !== LoanStatus.PENDING && existingLoan.status !== LoanStatus.APPROVED) {
     return res.status(400).json({ error: 'Financial fields can only be edited for PENDING or APPROVED loans' });
+  }
+
+  const [paidSchedules, collectionCount] = await Promise.all([
+    prisma.loanSchedule.count({
+      where: { loanId: existingLoan.id, status: { in: ['PAID', 'PARTIAL'] } },
+    }),
+    prisma.collection.count({ where: { loanId: existingLoan.id, isVoided: false } }),
+  ]);
+  if (paidSchedules > 0 || collectionCount > 0) {
+    return res.status(400).json({ error: 'Cannot change financial details after collections have been recorded.' });
   }
 
   const numDues = Number(noOfDues ?? existingLoan.noOfDues);
@@ -419,6 +436,10 @@ export const deleteLoan = asyncHandler(async (req: Request, res: Response) => {
 
   const user = (req as any).user;
   requireBranchAccess(user, existingLoan.customer?.area?.branchId, 'delete a loan for a customer outside your branch');
+  const areaScopeErr = checkAreaScope(user, res.locals.areaIds, existingLoan.customer?.areaId);
+  if (areaScopeErr) return res.status(403).json({ error: areaScopeErr });
+  const deletePerm = await assertMenuPermission(user, '/admin/loans', 'canDelete');
+  if (deletePerm) return res.status(403).json({ error: deletePerm });
 
   if (existingLoan.status !== LoanStatus.PENDING) {
     return res.status(400).json({ error: 'Only pending loans can be deleted' });
@@ -442,9 +463,8 @@ export const getLoanLedger = asyncHandler(async (req: Request, res: Response) =>
 
   const user = (req as any).user;
   requireBranchAccess(user, loan.customer?.area?.branchId, 'view this loan ledger');
-  if (res.locals.areaIds?.length && loan.customer?.areaId && !res.locals.areaIds.includes(loan.customer.areaId)) {
-    return res.status(403).json({ error: 'Security Violation: loan is outside your area.' });
-  }
+  const areaScopeErr = checkAreaScope(user, res.locals.areaIds, loan.customer?.areaId);
+  if (areaScopeErr) return res.status(403).json({ error: areaScopeErr });
 
   const ledger = await prisma.loanLedger.findMany({
     where: { loanId: String(id) },

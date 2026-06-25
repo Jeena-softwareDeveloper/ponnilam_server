@@ -6,6 +6,7 @@ import { getNextTrnNumber, processLoanCollection, voidCollection } from '../../u
 import { LOAN_COLLECTIBLE_STATUSES } from '../../utils/prisma-enums';
 import { getDayRange, getDateRangeBounds } from '../../utils/date.utils';
 import { isAdminUser } from '../../utils/user.utils';
+import { assertMenuPermission, checkAreaScope, resolveStaffId } from '../../utils/validation.helpers';
 import { parsePagination, paginatedResponse } from '../../utils/pagination.utils';
 
 export const createCollection = asyncHandler(async (req: Request, res: Response) => {
@@ -22,12 +23,21 @@ export const createCollection = asyncHandler(async (req: Request, res: Response)
   }
 
   const user = (req as any).user;
+  const createPerm = await assertMenuPermission(user, '/admin/collections', 'canCreate');
+  if (createPerm) return res.status(403).json({ error: createPerm });
+
   const loanPreview = await prisma.loan.findUnique({
     where: { id: loanId },
     include: { customer: { include: { area: true } } },
   });
   if (!loanPreview) return res.status(404).json({ error: 'Loan not found' });
   requireBranchAccess(user, loanPreview.customer?.area?.branchId, 'create a collection for a loan outside your branch');
+  const areaScopeErr = checkAreaScope(user, res.locals.areaIds, loanPreview.customer?.areaId);
+  if (areaScopeErr) return res.status(403).json({ error: areaScopeErr });
+
+  const staffResult = await resolveStaffId(staffId, user);
+  if ('error' in staffResult) return res.status(400).json({ error: staffResult.error });
+  const resolvedStaffId = staffResult.staffId;
 
   if (!LOAN_COLLECTIBLE_STATUSES.includes(loanPreview.status as (typeof LOAN_COLLECTIBLE_STATUSES)[number])) {
     return res.status(400).json({ error: `Cannot collect on loan with status ${loanPreview.status}` });
@@ -40,7 +50,7 @@ export const createCollection = asyncHandler(async (req: Request, res: Response)
       amount: Number(amount),
       trnDate: new Date(trnDate),
       trnNumber,
-      staffId: staffId || user?.id,
+      staffId: resolvedStaffId,
       remarks,
       userBranchId: user?.branchId,
       isAdmin: isAdminUser(user),
@@ -129,6 +139,9 @@ export const voidCollectionEntry = asyncHandler(async (req: Request, res: Respon
   if (!reason?.trim()) return res.status(400).json({ error: 'Void reason is required' });
 
   const user = (req as any).user;
+  const deletePerm = await assertMenuPermission(user, '/admin/collections', 'canDelete');
+  if (deletePerm) return res.status(403).json({ error: deletePerm });
+
   const existing = await prisma.collection.findUnique({
     where: { id: String(id) },
     include: { loan: { include: { customer: { include: { area: true } } } } },
@@ -137,6 +150,8 @@ export const voidCollectionEntry = asyncHandler(async (req: Request, res: Respon
   if (existing.isVoided) return res.status(400).json({ error: 'Collection is already voided' });
 
   requireBranchAccess(user, existing.loan?.customer?.area?.branchId, 'void a collection outside your branch');
+  const areaScopeErr = checkAreaScope(user, res.locals.areaIds, existing.loan?.customer?.areaId);
+  if (areaScopeErr) return res.status(403).json({ error: areaScopeErr });
 
   await prisma.$transaction(async (tx) => {
     await voidCollection(tx, String(id), reason.trim(), user.id);

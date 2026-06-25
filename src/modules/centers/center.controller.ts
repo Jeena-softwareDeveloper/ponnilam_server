@@ -1,11 +1,10 @@
 import { Request, Response } from 'express';
 import prisma from '../../utils/prisma';
 import { LOAN_COLLECTIBLE_STATUSES, LoanStatus, OPEN_LOAN_STATUSES } from '../../utils/prisma-enums';
+import { countCenterMembers } from '../../utils/center-member.utils';
 
-// Generate Center Code (e.g., SAT001 from "Sattur" center name)
 const generateCenterCode = async (name: string) => {
   const prefix = name.trim().replace(/[^a-zA-Z]/g, '').substring(0, 3).toUpperCase();
-  // Count existing centers with the same prefix
   const existing = await prisma.center.findMany({
     where: { code: { startsWith: prefix } },
     orderBy: { code: 'desc' },
@@ -229,6 +228,18 @@ export const updateCenter = async (req: Request, res: Response): Promise<any> =>
       const empBranch = employee.branchId || employee.area?.branchId;
       if (area && empBranch && empBranch !== area.branchId) {
         return res.status(400).json({ error: 'Employee does not belong to this center branch' });
+      }
+    }
+
+    if (totalMembers !== undefined) {
+      const newLimit = parseInt(String(totalMembers), 10);
+      if (!Number.isNaN(newLimit) && newLimit > 0) {
+        const currentMembers = await countCenterMembers(prisma, String(id));
+        if (currentMembers > newLimit) {
+          return res.status(400).json({
+            error: `Cannot set member limit to ${newLimit}. Center already has ${currentMembers} member(s).`,
+          });
+        }
       }
     }
 

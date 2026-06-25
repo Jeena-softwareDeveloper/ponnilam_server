@@ -14,30 +14,43 @@ export type NotificationRow = {
 };
 
 export async function listNotifications(branchId?: string | null, limit = 50): Promise<NotificationRow[]> {
-  if (branchId) {
-    return prisma.$queryRaw<NotificationRow[]>`
-      SELECT id, type, title, message, isRead, status, staffId, branchId, createdAt, updatedAt
-      FROM Notification
-      WHERE branchId = ${branchId}
-      ORDER BY datetime(createdAt) DESC
-      LIMIT ${limit}
-    `;
-  }
-
-  return prisma.$queryRaw<NotificationRow[]>`
-    SELECT id, type, title, message, isRead, status, staffId, branchId, createdAt, updatedAt
-    FROM Notification
-    ORDER BY datetime(createdAt) DESC
-    LIMIT ${limit}
-  `;
+  const where = branchId ? { branchId } : {};
+  
+  return prisma.notification.findMany({
+    where,
+    select: {
+      id: true,
+      type: true,
+      title: true,
+      message: true,
+      isRead: true,
+      status: true,
+      staffId: true,
+      branchId: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+    orderBy: {
+      createdAt: 'desc',
+    },
+    take: limit,
+  }) as Promise<NotificationRow[]>;
 }
 
 export async function getNotificationById(id: string): Promise<NotificationRow | null> {
-  const rows = await prisma.$queryRaw<NotificationRow[]>`
-    SELECT id, type, title, message, isRead, status, staffId, branchId, createdAt, updatedAt
-    FROM Notification
-    WHERE id = ${id}
-    LIMIT 1
-  `;
-  return rows[0] ?? null;
+  return prisma.notification.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      type: true,
+      title: true,
+      message: true,
+      isRead: true,
+      status: true,
+      staffId: true,
+      branchId: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  }) as Promise<NotificationRow | null>;
 }

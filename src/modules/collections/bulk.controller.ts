@@ -2,6 +2,8 @@ import { Request, Response } from 'express';
 import prisma from '../../utils/prisma';
 import { getNextTrnNumber, processLoanCollection } from '../../utils/collection.utils';
 import { isAdminUser } from '../../utils/user.utils';
+import { assertMenuPermission, checkAreaScope, resolveStaffId } from '../../utils/validation.helpers';
+import { requireBranchAccess } from '../../utils/security.utils';
 
 export const processBulkCollection = async (req: Request, res: Response): Promise<any> => {
   try {
@@ -10,8 +12,31 @@ export const processBulkCollection = async (req: Request, res: Response): Promis
     if (!collections || !Array.isArray(collections) || collections.length === 0) {
       return res.status(400).json({ error: 'No collection data provided' });
     }
+    if (!trnDate || isNaN(new Date(trnDate).getTime())) {
+      return res.status(400).json({ error: 'Valid transaction date is required' });
+    }
+    if (!centerId) {
+      return res.status(400).json({ error: 'Center is required for bulk collection' });
+    }
 
     const user = (req as any).user;
+    const createPerm = await assertMenuPermission(user, '/admin/collections', 'canCreate');
+    if (createPerm) return res.status(403).json({ error: createPerm });
+
+    const center = await prisma.center.findUnique({
+      where: { id: String(centerId) },
+      include: { area: true },
+    });
+    if (!center) return res.status(400).json({ error: 'Invalid center selected' });
+    if (!center.isActive) return res.status(400).json({ error: 'Selected center is inactive' });
+    requireBranchAccess(user, center.area?.branchId, 'create collections outside your branch');
+    const areaScopeErr = checkAreaScope(user, res.locals.areaIds, center.areaId);
+    if (areaScopeErr) return res.status(403).json({ error: areaScopeErr });
+
+    const staffResult = await resolveStaffId(staffId, user);
+    if ('error' in staffResult) return res.status(400).json({ error: staffResult.error });
+    const resolvedStaffId = staffResult.staffId;
+
     const collectionDate = new Date(trnDate);
 
     const { processed, skipped } = await prisma.$transaction(async (tx) => {
@@ -34,9 +59,9 @@ export const processBulkCollection = async (req: Request, res: Response): Promis
             amount: entryAmount,
             trnDate: collectionDate,
             trnNumber,
-            staffId: staffId || user?.id,
+            staffId: resolvedStaffId,
             remarks,
-            centerId,
+            centerId: String(centerId),
             userBranchId: user?.branchId,
             isAdmin: isAdminUser(user),
           });
