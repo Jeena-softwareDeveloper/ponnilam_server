@@ -27,5 +27,8 @@ export const errorHandler = (err: any, req: Request, res: Response, next: NextFu
   }
 
   // Generic 500 Internal Server Error
-  return res.status(500).json({ error: err.message || 'An unexpected error occurred on the server.' });
+  const isProd = process.env.NODE_ENV === 'production';
+  return res.status(500).json({
+    error: isProd ? 'An unexpected error occurred on the server.' : (err.message || 'An unexpected error occurred on the server.'),
+  });
 };

@@ -49,7 +49,7 @@ export const getCollectionReport = async (req: Request, res: Response) => {
     if (!(await ensureReportAccess(req, res))) return;
 
     const { startDate, endDate, branchId, type, staffId, centerId } = req.query as Record<string, string>;
-    const where: any = { trnDate: buildDateWhere(startDate, endDate, type) };
+    const where: any = { isVoided: false, trnDate: buildDateWhere(startDate, endDate, type) };
 
     const user = (req as any).user;
     const userBranchId = user?.branchId;
@@ -215,7 +215,7 @@ export const getEmployeeWiseReport = async (req: Request, res: Response) => {
     const user = (req as any).user;
     const userBranchId = user?.branchId;
 
-    const where: any = { trnDate: dateWhere };
+    const where: any = { isVoided: false, trnDate: dateWhere };
     if (res.locals.areaIds?.length) {
       where.loan = { customer: { areaId: { in: res.locals.areaIds } } };
     } else if (userBranchId) {
@@ -369,7 +369,7 @@ export const getPartyAmountReport = async (req: Request, res: Response) => {
       resolvedCustomerId = customer.id;
     }
 
-    const where: any = { trnDate: buildDateWhere(startDate, endDate, type) };
+    const where: any = { isVoided: false, trnDate: buildDateWhere(startDate, endDate, type) };
 
     if (res.locals.areaIds?.length) {
       where.loan = {

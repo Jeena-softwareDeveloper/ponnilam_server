@@ -27,6 +27,8 @@ import { authenticateToken, branchScope } from './middlewares/auth.middleware';
 import { requireAdmin } from './middlewares/admin.middleware';
 import { auditMiddleware } from './middlewares/audit.middleware';
 import { errorHandler } from './middlewares/error.middleware';
+import { decryptRequestBody, encryptResponseBody } from './middlewares/encryption.middleware';
+import { isApiEncryptionEnabled } from './utils/api-crypto';
 
 dotenv.config();
 
@@ -36,6 +38,12 @@ if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
   process.exit(1);
 } else if (!process.env.JWT_SECRET) {
   console.warn('WARNING: JWT_SECRET is not set. API requests will fail until it is configured in .env');
+}
+
+if (isApiEncryptionEnabled()) {
+  console.log('API payload encryption is enabled for /api/v1/*');
+} else if (process.env.NODE_ENV === 'production') {
+  console.warn('WARNING: API_ENCRYPTION_KEY is not set. API responses are sent in plain JSON.');
 }
 
 const app = express();
@@ -68,9 +76,11 @@ app.use(cors({
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-User-Role', 'X-User-Branch-Id'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-User-Role', 'X-User-Branch-Id', 'X-Api-Encrypted'],
 }));
 app.use(express.json());
+app.use(decryptRequestBody);
+app.use(encryptResponseBody);
 
 // Main Routes Setup
 app.use('/api/v1/auth', authRoutes);
