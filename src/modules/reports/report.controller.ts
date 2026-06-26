@@ -159,12 +159,13 @@ export const getCenterDetailReport = async (req: Request, res: Response) => {
 export const getCenterCustomerReport = async (req: Request, res: Response) => {
   try {
     if (!(await ensureReportAccess(req, res))) return;
-    const { centerId, branchId } = req.query as Record<string, string>;
+    const { centerId, branchId, staffId } = req.query as Record<string, string>;
     const user = (req as any).user;
     const userBranchId = user?.branchId;
 
     const where: any = {};
     if (centerId) where.centerId = centerId;
+    if (staffId) where.center = { employeeId: staffId };
     
     if (res.locals.areaIds?.length > 0) {
       where.areaId = { in: res.locals.areaIds };
@@ -177,7 +178,7 @@ export const getCenterCustomerReport = async (req: Request, res: Response) => {
     const customers = await prisma.customer.findMany({
       where,
       include: {
-        center: true,
+        center: { include: { employee: { select: { id: true, name: true, phone: true, username: true } } } },
         area: { include: { branch: true } },
         loans: {
           where: { status: { in: LOAN_COLLECTIBLE_STATUSES } },

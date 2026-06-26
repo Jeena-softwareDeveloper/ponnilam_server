@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
+import { seedDemoData } from './seed-demo-data';
 
 const prisma = new PrismaClient();
 
@@ -150,7 +151,7 @@ async function main() {
   });
 
   // 3. Create Admin Staff (One Admin)
-  const seedPassword = process.env.SEED_ADMIN_PASSWORD || require('crypto').randomBytes(8).toString('hex');
+  const seedPassword = process.env.SEED_ADMIN_PASSWORD || 'password123';
   const hashedPassword = await bcrypt.hash(seedPassword, 10);
   const mustChangePassword = !process.env.SEED_ADMIN_PASSWORD;
 
@@ -202,6 +203,9 @@ async function main() {
       });
     }
   }
+
+  // 5. Demo data — 5 field staff mapped to centers, customers & loans
+  await seedDemoData(prisma, staffRole.id, process.env.SEED_STAFF_PASSWORD || 'password123');
 
   console.log('Seeding finished.');
 }
