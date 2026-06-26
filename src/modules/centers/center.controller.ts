@@ -487,6 +487,11 @@ export const getCenterJointLiabilitySheet = async (req: Request, res: Response):
       }
     }
 
+    const centerAreaId = center.areaId;
+    const members = center.customers.filter(
+      (c) => c.centerMemberType !== 'IMPORT' && (!centerAreaId || c.areaId === centerAreaId)
+    );
+
     const sortedGroups = [...center.groups].sort(
       (a, b) => parseGroupIndex(a.groupName) - parseGroupIndex(b.groupName)
     );
@@ -499,7 +504,7 @@ export const getCenterJointLiabilitySheet = async (req: Request, res: Response):
         id: g.id,
         groupName: g.groupName,
         shortLabel: g.groupCode || `G${parseGroupIndex(g.groupName) || idx + 1}`,
-        customers: center.customers
+        customers: members
           .filter((c) => c.groupId === g.id)
           .map((c) => ({
             id: c.id,
@@ -509,21 +514,6 @@ export const getCenterJointLiabilitySheet = async (req: Request, res: Response):
           })),
       }))
       .filter((g) => g.customers.length > 0);
-
-    const unassigned = center.customers.filter((c) => !c.groupId);
-    if (unassigned.length > 0 && !groupId) {
-      groupsPayload.push({
-        id: '_unassigned',
-        groupName: 'Unassigned',
-        shortLabel: 'G0',
-        customers: unassigned.map((c) => ({
-          id: c.id,
-          name: c.name,
-          customerNo: c.customerNo,
-          coApplicantName: c.coApplicant?.name || '',
-        })),
-      });
-    }
 
     const branch = center.area?.branch;
     return res.status(200).json({
