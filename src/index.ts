@@ -41,11 +41,15 @@ if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
 const app = express();
 const port = process.env.PORT || 5000;
 
+const isLocalDevOrigin = (origin: string) =>
+  /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin);
+
 const allowedOrigins = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
+  ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
   : [
       'http://localhost:3000',
       'http://localhost:3001',
+      'http://localhost:3002',
       'https://ponnilam-ui.vercel.app',
       'https://ponnilamfinance.com',
       'https://app.ponnilamfincorp.com',
@@ -56,6 +60,10 @@ app.use(cors({
     // Allow requests with no origin (e.g. mobile apps, curl, Postman)
     if (!origin) return callback(null, true);
     if (allowedOrigins.includes(origin)) return callback(null, true);
+    // Local dev: any localhost port (Next.js may use 3002, 3003, etc.)
+    if (process.env.NODE_ENV !== 'production' && isLocalDevOrigin(origin)) {
+      return callback(null, true);
+    }
     return callback(new Error(`CORS: Origin ${origin} not allowed`));
   },
   credentials: true,

@@ -113,7 +113,7 @@ export const getCenterDetailReport = async (req: Request, res: Response) => {
       where,
       include: {
         area: { include: { branch: true } },
-        employee: { select: { name: true, phone: true } },
+        employee: { select: { id: true, name: true, phone: true, username: true } },
         customers: {
           include: {
             loans: {

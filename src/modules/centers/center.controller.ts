@@ -399,7 +399,7 @@ export const getCenterCollectionSheet = async (req: Request, res: Response): Pro
       where: { id: centerId },
       include: {
         area: { include: { branch: true } },
-        employee: { select: { name: true, phone: true, username: true } },
+        employee: { select: { id: true, name: true, phone: true, username: true } },
         customers: {
           include: {
             loans: {
