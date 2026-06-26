@@ -10,6 +10,8 @@
     "test": "node --require ts-node/register --test src/utils/__tests__/loan.utils.test.ts src/utils/__tests__/api-crypto.test.ts",
     "db:push": "prisma db push",
     "db:seed": "ts-node prisma/seed.ts",
+    "db:seed-load": "ts-node prisma/seed-load-test.ts",
+    "test:api": "ts-node scripts/full-api-test.ts",
     "db:backfill": "ts-node prisma/backfill-required-fields.ts",
     "db:reset": "prisma db push --force-reset && ts-node prisma/seed.ts",
     "db:backfill-sequences": "ts-node prisma/backfill-sequences.ts",
