@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import prisma from '../../utils/prisma';
 import { LOAN_COLLECTIBLE_STATUSES, LoanStatus, OPEN_LOAN_STATUSES } from '../../utils/prisma-enums';
 import { countCenterMembers } from '../../utils/center-member.utils';
+import { sumUnpaidFromSchedules } from '../../utils/loan.utils';
 import { denyUnlessMenuPermission } from '../../utils/master-permissions';
 
 const MENU_PATH = '/admin/masters/centers';
@@ -398,7 +399,7 @@ export const getCenterCollectionSheet = async (req: Request, res: Response): Pro
       where: { id: centerId },
       include: {
         area: { include: { branch: true } },
-        employee: { select: { name: true, phone: true } },
+        employee: { select: { name: true, phone: true, username: true } },
         customers: {
           include: {
             loans: {
@@ -424,24 +425,32 @@ export const getCenterCollectionSheet = async (req: Request, res: Response): Pro
 
     const rows = center.customers.flatMap((customer) =>
       customer.loans.map((loan) => {
-        const totalPaid = loan.schedules.reduce((sum, s) => sum + (s.amountPaid || 0), 0);
-        const emi = loan.perDueAmount;
-        const balance = loan.outstandingAmount;
+        const scheduleDue = sumUnpaidFromSchedules(loan.schedules || []);
+        const demand =
+          scheduleDue > 0
+            ? scheduleDue
+            : Math.min(loan.outstandingAmount, loan.perDueAmount || loan.outstandingAmount);
         return {
           customerId: customer.id,
           customerNo: customer.customerNo,
           customerName: customer.name,
           loanId: loan.id,
           loanNumber: loan.loanNumber,
-          emi,
-          collected: totalPaid,
-          balance,
+          emi: loan.perDueAmount,
+          demand,
+          collected: null as number | null,
+          balance: loan.outstandingAmount,
           status: loan.status,
         };
       })
     );
 
-    return res.status(200).json({ center, rows });
+    return res.status(200).json({
+      center,
+      employee: center.employee,
+      rows,
+      totalDemand: rows.reduce((sum, r) => sum + (r.demand || 0), 0),
+    });
   } catch (error) {
     console.error('Error fetching center collection sheet:', error);
     return res.status(500).json({ error: 'Internal server error' });
