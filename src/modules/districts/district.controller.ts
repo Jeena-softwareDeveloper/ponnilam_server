@@ -1,5 +1,8 @@
 import { Request, Response } from 'express';
 import prisma from '../../utils/prisma';
+import { denyUnlessMenuPermission } from '../../utils/master-permissions';
+
+const MENU_PATH = '/admin/masters/districts';
 
 export const getDistricts = async (req: Request, res: Response): Promise<any> => {
   try {
@@ -18,6 +21,8 @@ export const getDistricts = async (req: Request, res: Response): Promise<any> =>
 
 export const createDistrict = async (req: Request, res: Response): Promise<any> => {
   try {
+    if (await denyUnlessMenuPermission(req, res, MENU_PATH, 'canCreate')) return;
+
     const { name, stateId } = req.body;
     if (!name || !stateId) return res.status(400).json({ error: 'Name and stateId are required' });
     const district = await prisma.district.create({
@@ -34,6 +39,8 @@ export const createDistrict = async (req: Request, res: Response): Promise<any> 
 
 export const updateDistrict = async (req: Request, res: Response): Promise<any> => {
   try {
+    if (await denyUnlessMenuPermission(req, res, MENU_PATH, 'canEdit')) return;
+
     const id = String(req.params.id);
     const { name, stateId, isActive } = req.body;
     const district = await prisma.district.update({
@@ -55,6 +62,8 @@ export const updateDistrict = async (req: Request, res: Response): Promise<any> 
 
 export const deleteDistrict = async (req: Request, res: Response): Promise<any> => {
   try {
+    if (await denyUnlessMenuPermission(req, res, MENU_PATH, 'canDelete')) return;
+
     const id = String(req.params.id);
     await prisma.district.delete({ where: { id } });
     return res.status(200).json({ message: 'District deleted successfully' });

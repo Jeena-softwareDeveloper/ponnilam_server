@@ -1,5 +1,8 @@
 import { Request, Response } from 'express';
 import prisma from '../../utils/prisma';
+import { denyUnlessMenuPermission } from '../../utils/master-permissions';
+
+const MENU_PATH = '/admin/masters/areas';
 
 export const getAreas = async (req: Request, res: Response): Promise<any> => {
   try {
@@ -21,6 +24,8 @@ export const getAreas = async (req: Request, res: Response): Promise<any> => {
 
 export const createArea = async (req: Request, res: Response): Promise<any> => {
   try {
+    if (await denyUnlessMenuPermission(req, res, MENU_PATH, 'canCreate')) return;
+
     const { name, branchId } = req.body;
     if (!name || !branchId) return res.status(400).json({ error: 'Name and branchId are required' });
     const area = await prisma.area.create({
@@ -37,6 +42,8 @@ export const createArea = async (req: Request, res: Response): Promise<any> => {
 
 export const updateArea = async (req: Request, res: Response): Promise<any> => {
   try {
+    if (await denyUnlessMenuPermission(req, res, MENU_PATH, 'canEdit')) return;
+
     const id = String(req.params.id);
     const { name, branchId, isActive } = req.body;
     
@@ -80,6 +87,8 @@ export const updateArea = async (req: Request, res: Response): Promise<any> => {
 
 export const deleteArea = async (req: Request, res: Response): Promise<any> => {
   try {
+    if (await denyUnlessMenuPermission(req, res, MENU_PATH, 'canDelete')) return;
+
     const id = String(req.params.id);
 
     const existingArea = await prisma.area.findUnique({ where: { id } });

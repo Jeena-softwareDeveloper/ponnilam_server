@@ -10,6 +10,13 @@ import {
   loadStaffOrThrow,
   StaffSecurityError,
 } from '../../utils/staff-security.utils';
+import {
+  executePasswordReset,
+  listPendingPasswordResetRequests,
+} from '../../utils/password-reset.utils';
+import { denyUnlessMenuPermission } from '../../utils/master-permissions';
+
+const STAFF_MENU_PATH = '/admin/masters/staffs';
 
 function withoutPassword<T extends { password?: string }>(staff: T) {
   const { password: _, ...safe } = staff;
@@ -124,6 +131,8 @@ export const getStaffs = async (req: Request, res: Response): Promise<any> => {
 
 export const createStaff = async (req: Request, res: Response): Promise<any> => {
   try {
+    if (await denyUnlessMenuPermission(req, res, STAFF_MENU_PATH, 'canCreate')) return;
+
     const user = (req as any).user;
     let { name, username, phone, email, areaId, branchId, roleId, password } = req.body;
     if (!name || !phone) return res.status(400).json({ error: 'Name and phone are required' });
@@ -202,6 +211,8 @@ export const createStaff = async (req: Request, res: Response): Promise<any> => 
 
 export const updateStaff = async (req: Request, res: Response): Promise<any> => {
   try {
+    if (await denyUnlessMenuPermission(req, res, STAFF_MENU_PATH, 'canEdit')) return;
+
     const user = (req as any).user;
     const id = String(req.params.id);
     const existing = await loadStaffOrThrow(id);
@@ -280,6 +291,8 @@ export const updateStaff = async (req: Request, res: Response): Promise<any> => 
 
 export const deleteStaff = async (req: Request, res: Response): Promise<any> => {
   try {
+    if (await denyUnlessMenuPermission(req, res, STAFF_MENU_PATH, 'canDelete')) return;
+
     const user = (req as any).user;
     const id = String(req.params.id);
     const existing = await loadStaffOrThrow(id);
@@ -295,16 +308,16 @@ export const deleteStaff = async (req: Request, res: Response): Promise<any> => 
 export const getRequests = async (req: Request, res: Response): Promise<any> => {
   try {
     const user = (req as any).user;
-    const where: any = { action: 'FORGOT_PASSWORD_REQUEST' };
-    if (user?.role?.name !== 'Admin' && user?.branchId) {
-      where.staff = { OR: [{ branchId: user.branchId }, { area: { branchId: user.branchId } }] };
-    }
-    const logs = await prisma.auditLog.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      include: { staff: { select: { id: true, name: true, phone: true, username: true } } },
-    });
-    return res.status(200).json(logs);
+    const branchId = user?.role?.name !== 'Admin' && user?.branchId ? user.branchId : null;
+    const notifications = await listPendingPasswordResetRequests(branchId);
+    return res.status(200).json(
+      notifications.map((n) => ({
+        id: n.id,
+        details: n.message,
+        createdAt: n.createdAt,
+        staff: n.staff,
+      }))
+    );
   } catch (error) {
     return handleStaffError(res, error);
   }
@@ -313,9 +326,38 @@ export const getRequests = async (req: Request, res: Response): Promise<any> => 
 export const resolveResetRequest = async (req: Request, res: Response): Promise<any> => {
   try {
     const user = (req as any).user;
-    const logId = String(req.params.id);
+    const requestId = String(req.params.id);
 
-    const requestLog = await prisma.auditLog.findUnique({ where: { id: logId } });
+    const notification = await prisma.notification.findUnique({
+      where: { id: requestId },
+      include: { staff: true },
+    });
+
+    if (
+      notification &&
+      notification.type === 'PASSWORD_RESET' &&
+      notification.status === 'PENDING' &&
+      notification.staffId
+    ) {
+      const staff = await loadStaffOrThrow(notification.staffId);
+      assertCanManageStaff(user, staff, 'reset password for this staff member');
+
+      const { temporaryPassword, staffName } = await executePasswordReset({
+        staffId: staff.id,
+        approvedByUserId: user.id,
+        approvedByName: user.name || user.id,
+        notificationId: notification.id,
+      });
+
+      return res.status(200).json({
+        message: 'Password reset successfully. Share the temporary password securely with the staff member.',
+        temporaryPassword,
+        staffName,
+      });
+    }
+
+    // Legacy: audit-log id from older clients
+    const requestLog = await prisma.auditLog.findUnique({ where: { id: requestId } });
     if (!requestLog || !requestLog.staffId || requestLog.action !== 'FORGOT_PASSWORD_REQUEST') {
       return res.status(404).json({ error: 'Reset request not found' });
     }
@@ -323,25 +365,26 @@ export const resolveResetRequest = async (req: Request, res: Response): Promise<
     const staff = await loadStaffOrThrow(requestLog.staffId);
     assertCanManageStaff(user, staff, 'reset password for this staff member');
 
-    const temporaryPassword = generateTemporaryPassword();
-    const hashedPassword = await bcrypt.hash(temporaryPassword, 10);
-
-    await prisma.staff.update({
-      where: { id: staff.id },
-      data: { password: hashedPassword, mustChangePassword: true },
+    const pendingNotif = await prisma.notification.findFirst({
+      where: {
+        staffId: staff.id,
+        type: 'PASSWORD_RESET',
+        status: 'PENDING',
+      },
+      orderBy: { createdAt: 'desc' },
     });
 
-    await prisma.auditLog.update({
-      where: { id: logId },
-      data: {
-        action: 'PASSWORD_RESET_RESOLVED',
-        details: `Password reset for ${staff.name} by ${user.name || user.id}`,
-      },
+    const { temporaryPassword, staffName } = await executePasswordReset({
+      staffId: staff.id,
+      approvedByUserId: user.id,
+      approvedByName: user.name || user.id,
+      notificationId: pendingNotif?.id,
     });
 
     return res.status(200).json({
       message: 'Password reset successfully. Share the temporary password securely with the staff member.',
       temporaryPassword,
+      staffName,
     });
   } catch (error) {
     return handleStaffError(res, error);

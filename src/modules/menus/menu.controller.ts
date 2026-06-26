@@ -1,5 +1,9 @@
 import { Request, Response } from 'express';
 import prisma from '../../utils/prisma';
+import { denyUnlessMenuPermission } from '../../utils/master-permissions';
+
+const MENU_PATH = '/admin/masters/menus';
+const PERMISSIONS_PATH = '/admin/masters/permissions';
 
 export const getMenus = async (req: Request, res: Response): Promise<any> => {
   try {
@@ -16,6 +20,8 @@ export const getMenus = async (req: Request, res: Response): Promise<any> => {
 
 export const createMenu = async (req: Request, res: Response): Promise<any> => {
   try {
+    if (await denyUnlessMenuPermission(req, res, MENU_PATH, 'canCreate')) return;
+
     const { name, path, icon, parentId } = req.body;
     if (!name) return res.status(400).json({ error: 'Menu name is required' });
     const menu = await prisma.menu.create({
@@ -36,6 +42,8 @@ export const createMenu = async (req: Request, res: Response): Promise<any> => {
 
 export const updateMenu = async (req: Request, res: Response): Promise<any> => {
   try {
+    if (await denyUnlessMenuPermission(req, res, MENU_PATH, 'canEdit')) return;
+
     const id = String(req.params.id);
     const { name, path, icon, parentId } = req.body;
     const menu = await prisma.menu.update({
@@ -57,6 +65,8 @@ export const updateMenu = async (req: Request, res: Response): Promise<any> => {
 
 export const deleteMenu = async (req: Request, res: Response): Promise<any> => {
   try {
+    if (await denyUnlessMenuPermission(req, res, MENU_PATH, 'canDelete')) return;
+
     const id = String(req.params.id);
     await prisma.menu.delete({ where: { id } });
     return res.status(200).json({ message: 'Menu deleted successfully' });
@@ -96,6 +106,8 @@ export const getStaffMenus = async (req: Request, res: Response): Promise<any> =
 
 export const assignMenus = async (req: Request, res: Response): Promise<any> => {
   try {
+    if (await denyUnlessMenuPermission(req, res, PERMISSIONS_PATH, 'canEdit')) return;
+
     const staffId = String(req.params.staffId);
     // Accept: permissions = [{ menuId, canView, canCreate, canEdit, canDelete }]
     const { menuIds, permissions } = req.body;
@@ -160,6 +172,8 @@ export const getBranchMenus = async (req: Request, res: Response): Promise<any> 
 
 export const assignBranchMenus = async (req: Request, res: Response): Promise<any> => {
   try {
+    if (await denyUnlessMenuPermission(req, res, PERMISSIONS_PATH, 'canEdit')) return;
+
     const branchId = String(req.params.branchId);
     const { menuIds, permissions } = req.body;
 

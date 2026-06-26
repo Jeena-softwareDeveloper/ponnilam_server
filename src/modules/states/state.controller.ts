@@ -1,5 +1,8 @@
 import { Request, Response } from 'express';
 import prisma from '../../utils/prisma';
+import { denyUnlessMenuPermission } from '../../utils/master-permissions';
+
+const MENU_PATH = '/admin/masters/states';
 
 export const getStates = async (req: Request, res: Response): Promise<any> => {
   try {
@@ -15,6 +18,8 @@ export const getStates = async (req: Request, res: Response): Promise<any> => {
 
 export const createState = async (req: Request, res: Response): Promise<any> => {
   try {
+    if (await denyUnlessMenuPermission(req, res, MENU_PATH, 'canCreate')) return;
+
     const { name } = req.body;
     if (!name) return res.status(400).json({ error: 'Name is required' });
     const state = await prisma.state.create({
@@ -30,6 +35,8 @@ export const createState = async (req: Request, res: Response): Promise<any> => 
 
 export const updateState = async (req: Request, res: Response): Promise<any> => {
   try {
+    if (await denyUnlessMenuPermission(req, res, MENU_PATH, 'canEdit')) return;
+
     const id = String(req.params.id);
     const { name, isActive } = req.body;
     const state = await prisma.state.update({
@@ -49,6 +56,8 @@ export const updateState = async (req: Request, res: Response): Promise<any> => 
 
 export const deleteState = async (req: Request, res: Response): Promise<any> => {
   try {
+    if (await denyUnlessMenuPermission(req, res, MENU_PATH, 'canDelete')) return;
+
     const id = String(req.params.id);
     await prisma.state.delete({ where: { id } });
     return res.status(200).json({ message: 'State deleted successfully' });

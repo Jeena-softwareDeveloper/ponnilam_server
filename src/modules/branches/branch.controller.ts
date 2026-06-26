@@ -3,6 +3,10 @@ import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { assignBranchManagerMenus } from '../../utils/branch-menus.utils';
 import { generateTemporaryPassword } from '../../utils/auth.utils';
+import { assertMenuPermission } from '../../utils/validation.helpers';
+import { denyUnlessMenuPermission } from '../../utils/master-permissions';
+
+const MENU_PATH = '/admin/masters/branches';
 
 export const getBranches = async (req: Request, res: Response): Promise<any> => {
   try {
@@ -55,6 +59,10 @@ export const getNextBranchCode = async (req: Request, res: Response): Promise<an
 
 export const createBranch = async (req: Request, res: Response): Promise<any> => {
   try {
+    const user = (req as any).user;
+    const createPerm = await assertMenuPermission(user, MENU_PATH, 'canCreate');
+    if (createPerm) return res.status(403).json({ error: createPerm });
+
     const { name, code, stateId, districtId, location, phone, adminName, adminUsername, adminPhone, adminPassword, adminRoleId } = req.body;
     if (!name || !code) return res.status(400).json({ error: 'Name and code are required' });
 
@@ -123,6 +131,10 @@ export const createBranch = async (req: Request, res: Response): Promise<any> =>
 
 export const updateBranch = async (req: Request, res: Response): Promise<any> => {
   try {
+    const user = (req as any).user;
+    const editPerm = await assertMenuPermission(user, MENU_PATH, 'canEdit');
+    if (editPerm) return res.status(403).json({ error: editPerm });
+
     const id = String(req.params.id);
     const { name, code, stateId, districtId, location, phone, isActive, adminName, adminUsername, adminPhone, adminPassword, adminRoleId } = req.body;
     
@@ -206,6 +218,8 @@ export const updateBranch = async (req: Request, res: Response): Promise<any> =>
 
 export const deleteBranch = async (req: Request, res: Response): Promise<any> => {
   try {
+    if (await denyUnlessMenuPermission(req, res, MENU_PATH, 'canDelete')) return;
+
     const id = String(req.params.id);
     await prisma.branch.delete({ where: { id } });
     return res.status(200).json({ message: 'Branch deleted successfully' });

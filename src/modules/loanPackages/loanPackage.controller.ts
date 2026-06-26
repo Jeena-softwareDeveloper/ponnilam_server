@@ -1,6 +1,9 @@
 import { Request, Response } from 'express';
 import prisma from '../../utils/prisma';
 import { validateLoanPackageFields } from '../../utils/validation.helpers';
+import { denyUnlessMenuPermission } from '../../utils/master-permissions';
+
+const MENU_PATH = '/admin/masters/loan-packages';
 
 export const getLoanPackages = async (req: Request, res: Response): Promise<any> => {
   try {
@@ -14,6 +17,8 @@ export const getLoanPackages = async (req: Request, res: Response): Promise<any>
 
 export const createLoanPackage = async (req: Request, res: Response): Promise<any> => {
   try {
+    if (await denyUnlessMenuPermission(req, res, MENU_PATH, 'canCreate')) return;
+
     const { name, interestRate, durationDays, frequency } = req.body;
     if (!name || interestRate === undefined || !durationDays) {
       return res.status(400).json({ error: 'Name, interestRate, and durationDays are required' });
@@ -42,6 +47,8 @@ export const createLoanPackage = async (req: Request, res: Response): Promise<an
 
 export const updateLoanPackage = async (req: Request, res: Response): Promise<any> => {
   try {
+    if (await denyUnlessMenuPermission(req, res, MENU_PATH, 'canEdit')) return;
+
     const id = String(req.params.id);
     const { name, interestRate, durationDays, frequency, isActive } = req.body;
     const validationErr = validateLoanPackageFields({
@@ -69,6 +76,8 @@ export const updateLoanPackage = async (req: Request, res: Response): Promise<an
 };
 export const deleteLoanPackage = async (req: Request, res: Response): Promise<any> => {
   try {
+    if (await denyUnlessMenuPermission(req, res, MENU_PATH, 'canDelete')) return;
+
     const id = String(req.params.id);
     await prisma.loanPackage.delete({ where: { id } });
     return res.status(200).json({ message: 'Loan package deleted successfully' });

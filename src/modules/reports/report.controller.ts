@@ -3,6 +3,19 @@ import prisma from '../../utils/prisma';
 import { LOAN_COLLECTIBLE_STATUSES, UNPAID_SCHEDULE_STATUSES } from '../../utils/prisma-enums';
 import { sumUnpaidFromSchedules } from '../../utils/loan.utils';
 import { getDateRangeBounds, getDayRange } from '../../utils/date.utils';
+import { assertMenuPermission } from '../../utils/validation.helpers';
+
+const REPORTS_MENU = '/admin/reports';
+
+async function ensureReportAccess(req: Request, res: Response): Promise<boolean> {
+  const user = (req as any).user;
+  const err = await assertMenuPermission(user, REPORTS_MENU, 'canView');
+  if (err) {
+    res.status(403).json({ error: err });
+    return false;
+  }
+  return true;
+}
 
 // Helper: apply branch/area scope from middleware
 const scopeCustomerFilter = (req: Request, res: Response, base: any = {}) => {
@@ -33,6 +46,8 @@ const buildDateWhere = (startDate?: string, endDate?: string, type?: string) => 
 // 1. Collection Report (existing - improved)
 export const getCollectionReport = async (req: Request, res: Response) => {
   try {
+    if (!(await ensureReportAccess(req, res))) return;
+
     const { startDate, endDate, branchId, type, staffId, centerId } = req.query as Record<string, string>;
     const where: any = { trnDate: buildDateWhere(startDate, endDate, type) };
 
@@ -68,6 +83,8 @@ export const getCollectionReport = async (req: Request, res: Response) => {
 // 2. Center Detail Report
 export const getCenterDetailReport = async (req: Request, res: Response) => {
   try {
+    if (!(await ensureReportAccess(req, res))) return;
+
     const { branchId, areaId, centerId, staffId } = req.query as Record<string, string>;
     const user = (req as any).user;
     const userBranchId = user?.branchId;
@@ -141,6 +158,7 @@ export const getCenterDetailReport = async (req: Request, res: Response) => {
 // 3. Center Customer List Report
 export const getCenterCustomerReport = async (req: Request, res: Response) => {
   try {
+    if (!(await ensureReportAccess(req, res))) return;
     const { centerId, branchId } = req.query as Record<string, string>;
     const user = (req as any).user;
     const userBranchId = user?.branchId;
@@ -189,6 +207,7 @@ export const getCenterCustomerReport = async (req: Request, res: Response) => {
 // 4. Employee Wise Collection Report
 export const getEmployeeWiseReport = async (req: Request, res: Response) => {
   try {
+    if (!(await ensureReportAccess(req, res))) return;
     const { startDate, endDate, type, branchId } = req.query as Record<string, string>;
     const dateWhere = buildDateWhere(startDate, endDate, type);
 
@@ -244,6 +263,7 @@ export const getEmployeeWiseReport = async (req: Request, res: Response) => {
 // 5. Area Wise Due Report
 export const getAreaDueReport = async (req: Request, res: Response) => {
   try {
+    if (!(await ensureReportAccess(req, res))) return;
     const { branchId, areaId } = req.query as Record<string, string>;
 
     const user = (req as any).user;
@@ -312,6 +332,7 @@ export const getAreaDueReport = async (req: Request, res: Response) => {
 // 6. Particular Party Amount Received Report
 export const getPartyAmountReport = async (req: Request, res: Response) => {
   try {
+    if (!(await ensureReportAccess(req, res))) return;
     const { customerId, loanId, loanNumber, customerNo, startDate, endDate, type } = req.query as Record<string, string>;
     const user = (req as any).user;
     const userBranchId = user?.branchId;

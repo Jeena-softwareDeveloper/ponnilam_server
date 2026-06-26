@@ -1,6 +1,19 @@
 import { Request, Response } from 'express';
 import prisma from '../../utils/prisma';
 import { LoanStatus, LOAN_COLLECTIBLE_STATUSES, UNPAID_SCHEDULE_STATUSES } from '../../utils/prisma-enums';
+import { assertAnyMenuView } from '../../utils/validation.helpers';
+
+const DASHBOARD_MENUS = ['/admin/dashboard', '/admin/branch-dashboard'];
+
+async function ensureDashboardAccess(req: Request, res: Response): Promise<boolean> {
+  const user = (req as any).user;
+  const err = await assertAnyMenuView(user, DASHBOARD_MENUS);
+  if (err) {
+    res.status(403).json({ error: err });
+    return false;
+  }
+  return true;
+}
 
 // ─── Shared helpers ─────────────────────────────────────────────────────────
 
@@ -41,6 +54,8 @@ function calcTrend(current: number, previous: number) {
 
 export const getDashboardKpis = async (req: Request, res: Response) => {
   try {
+    if (!(await ensureDashboardAccess(req, res))) return;
+
     const { areaId, branchId } = req.query as Record<string, string>;
     const user = (req as any).user;
     const activeBranchId = user?.branchId || branchId;
@@ -102,6 +117,7 @@ export const getDashboardKpis = async (req: Request, res: Response) => {
 
 export const getDashboardTrend = async (req: Request, res: Response) => {
   try {
+    if (!(await ensureDashboardAccess(req, res))) return;
     const { areaId, branchId } = req.query as Record<string, string>;
     const user = (req as any).user;
     const activeBranchId = user?.branchId || branchId;
@@ -135,6 +151,7 @@ export const getDashboardTrend = async (req: Request, res: Response) => {
 
 export const getDashboardCharts = async (req: Request, res: Response) => {
   try {
+    if (!(await ensureDashboardAccess(req, res))) return;
     const { areaId, branchId } = req.query as Record<string, string>;
     const user = (req as any).user;
     const activeBranchId = user?.branchId || branchId;
@@ -191,6 +208,7 @@ export const getDashboardCharts = async (req: Request, res: Response) => {
 
 export const getDashboardActivity = async (req: Request, res: Response) => {
   try {
+    if (!(await ensureDashboardAccess(req, res))) return;
     const { areaId, branchId } = req.query as Record<string, string>;
     const user = (req as any).user;
     const activeBranchId = user?.branchId || branchId;

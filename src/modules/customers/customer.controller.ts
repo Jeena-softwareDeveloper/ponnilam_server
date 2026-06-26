@@ -6,7 +6,7 @@ import { OPEN_LOAN_STATUSES } from '../../utils/prisma-enums';
 import { nextCustomerNo } from '../../utils/sequence.utils';
 import { parsePagination, paginatedResponse } from '../../utils/pagination.utils';
 import { validateCenterMemberLimit, validateCustomerCenterAssignment } from '../../utils/center-member.utils';
-import { assertMenuPermission, checkAreaScope, isValidMobile, resolveStaffId } from '../../utils/validation.helpers';
+import { assertMenuPermission, checkAreaScope, isValidMobile, resolveStaffId, assertUniqueCustomerMobile } from '../../utils/validation.helpers';
 
 export const createCustomer = asyncHandler(async (req: Request, res: Response) => {
   try {
@@ -86,6 +86,9 @@ export const createCustomer = asyncHandler(async (req: Request, res: Response) =
     const areaScopeErr = checkAreaScope(user, res.locals.areaIds, resolvedAreaId);
     if (areaScopeErr) return res.status(403).json({ error: areaScopeErr });
     requireBranchAccess(user, area.branchId, 'create entries outside your assigned branch');
+
+    const mobileDup = await assertUniqueCustomerMobile(general.mobile, area.branchId);
+    if (mobileDup) return res.status(409).json({ error: mobileDup });
 
     if (general?.employeeId) {
       const staffCheck = await resolveStaffId(general.employeeId, user, { fallbackToUser: false });
@@ -231,6 +234,18 @@ export const updateCustomer = asyncHandler(async (req: Request, res: Response) =
     const updateData: any = {};
     
     if (general) {
+      if (general.mobile !== undefined) {
+        if (!isValidMobile(general.mobile)) {
+          return res.status(400).json({ error: 'Enter a valid 10-digit mobile number' });
+        }
+        const mobileDup = await assertUniqueCustomerMobile(
+          general.mobile,
+          existingCustomer.area?.branchId,
+          String(id)
+        );
+        if (mobileDup) return res.status(409).json({ error: mobileDup });
+      }
+
       if (general.areaId !== undefined && general.areaId !== existingCustomer.areaId) {
         const oldArea = existingCustomer.area;
         const newArea = await prisma.area.findUnique({ where: { id: general.areaId } });

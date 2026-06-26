@@ -1,10 +1,13 @@
 import prisma from '../../utils/prisma';
 import { Request, Response } from 'express';
-import bcrypt from 'bcryptjs';
-import { NotificationType, NotificationStatus } from '../../utils/prisma-enums';
-import { generateTemporaryPassword } from '../../utils/auth.utils';
+import { NotificationType } from '../../utils/prisma-enums';
 import { isAdminUser } from '../../utils/user.utils';
 import { getNotificationById, listNotifications } from '../../utils/notification.utils';
+import {
+  executePasswordReset,
+  rejectPasswordReset as rejectPasswordResetRequest,
+  listPendingPasswordResetRequests,
+} from '../../utils/password-reset.utils';
 
 export const getNotifications = async (req: Request, res: Response): Promise<any> => {
   try {
@@ -65,32 +68,18 @@ export const approvePasswordReset = async (req: Request, res: Response): Promise
       return res.status(400).json({ error: 'No staff reference found' });
     }
 
-    const temporaryPassword = generateTemporaryPassword();
-    const hashedPassword = await bcrypt.hash(temporaryPassword, 10);
-
-    await prisma.$transaction([
-      prisma.staff.update({
-        where: { id: notif.staffId },
-        data: { password: hashedPassword, mustChangePassword: true },
-      }),
-      prisma.notification.update({
-        where: { id: id as string },
-        data: { status: NotificationStatus.APPROVED, isRead: true },
-      }),
-      prisma.auditLog.create({
-        data: {
-          action: 'PASSWORD_RESET_APPROVED',
-          entity: 'Auth',
-          staffId: user.id,
-          details: `Approved password reset for staff ${notif.staffId}`,
-        },
-      }),
-    ]);
+    const { temporaryPassword, staffName } = await executePasswordReset({
+      staffId: notif.staffId,
+      approvedByUserId: user.id,
+      approvedByName: user.name || user.id,
+      notificationId: id as string,
+    });
 
     return res.status(200).json({
       success: true,
       message: 'Password reset. Share the temporary password securely with the staff member.',
       temporaryPassword,
+      staffName,
     });
   } catch (error) {
     console.error('Approve password reset error:', error);
@@ -112,9 +101,14 @@ export const rejectPasswordReset = async (req: Request, res: Response): Promise<
       }
     }
 
-    await prisma.notification.update({
-      where: { id: id as string },
-      data: { status: NotificationStatus.REJECTED, isRead: true },
+    if (!notif.staffId) {
+      return res.status(400).json({ error: 'No staff reference found' });
+    }
+
+    await rejectPasswordResetRequest({
+      notificationId: id as string,
+      staffId: notif.staffId,
+      rejectedByName: user.name || user.id,
     });
 
     return res.status(200).json({ success: true });

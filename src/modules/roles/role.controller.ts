@@ -1,5 +1,8 @@
 import { Request, Response } from 'express';
 import prisma from '../../utils/prisma';
+import { denyUnlessMenuPermission } from '../../utils/master-permissions';
+
+const MENU_PATH = '/admin/masters/roles';
 
 export const getRoles = async (req: Request, res: Response): Promise<any> => {
   try {
@@ -16,6 +19,8 @@ export const getRoles = async (req: Request, res: Response): Promise<any> => {
 
 export const createRole = async (req: Request, res: Response): Promise<any> => {
   try {
+    if (await denyUnlessMenuPermission(req, res, MENU_PATH, 'canCreate')) return;
+
     const { name } = req.body;
     if (!name) return res.status(400).json({ error: 'Role name is required' });
     const role = await prisma.role.create({ data: { name } });
@@ -29,6 +34,8 @@ export const createRole = async (req: Request, res: Response): Promise<any> => {
 
 export const updateRole = async (req: Request, res: Response): Promise<any> => {
   try {
+    if (await denyUnlessMenuPermission(req, res, MENU_PATH, 'canEdit')) return;
+
     const id = String(req.params.id);
     const { name, isActive } = req.body;
     const role = await prisma.role.update({
@@ -48,6 +55,8 @@ export const updateRole = async (req: Request, res: Response): Promise<any> => {
 
 export const deleteRole = async (req: Request, res: Response): Promise<any> => {
   try {
+    if (await denyUnlessMenuPermission(req, res, MENU_PATH, 'canDelete')) return;
+
     const id = String(req.params.id);
     await prisma.role.delete({ where: { id } });
     return res.status(200).json({ message: 'Role deleted successfully' });

@@ -2,9 +2,10 @@ import prisma from './prisma';
 import { isAdminUser } from './user.utils';
 import { resolveMenuPermission, MenuPermission } from './permissions.utils';
 
-export type MenuAction = 'canCreate' | 'canEdit' | 'canDelete';
+export type MenuAction = 'canView' | 'canCreate' | 'canEdit' | 'canDelete';
 
 const ACTION_LABELS: Record<MenuAction, string> = {
+  canView: 'view',
   canCreate: 'create',
   canEdit: 'edit',
   canDelete: 'delete',
@@ -20,6 +21,43 @@ export async function assertMenuPermission(
   const perm = await resolveMenuPermission(user, menuPath);
   if (!perm?.[action]) {
     return `You do not have permission to ${ACTION_LABELS[action]} this resource.`;
+  }
+  return null;
+}
+
+/** Allow access when the user can view any of the given menu paths. */
+export async function assertAnyMenuView(
+  user: { id: string; role?: { name?: string } | string } | null | undefined,
+  menuPaths: string[]
+): Promise<string | null> {
+  if (!user) return 'Unauthorized';
+  if (isAdminUser(user)) return null;
+  for (const menuPath of menuPaths) {
+    const perm = await resolveMenuPermission(user, menuPath);
+    if (perm?.canView) return null;
+  }
+  return 'You do not have permission to view this resource.';
+}
+
+export async function assertUniqueCustomerMobile(
+  mobile: string,
+  branchId: string,
+  excludeCustomerId?: string
+): Promise<string | null> {
+  const normalized = String(mobile || '').trim();
+  if (!normalized) return null;
+
+  const existing = await prisma.customer.findFirst({
+    where: {
+      mobile: normalized,
+      ...(excludeCustomerId ? { id: { not: excludeCustomerId } } : {}),
+      area: { branchId },
+    },
+    select: { customerNo: true, name: true },
+  });
+
+  if (existing) {
+    return `Customer with mobile ${normalized} already exists in this branch (${existing.customerNo} — ${existing.name}).`;
   }
   return null;
 }

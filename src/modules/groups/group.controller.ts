@@ -1,6 +1,9 @@
 import { Request, Response } from 'express';
 import prisma from '../../utils/prisma';
 import { requireBranchAccess } from '../../utils/security.utils';
+import { denyUnlessMenuPermission } from '../../utils/master-permissions';
+
+const MENU_PATH = '/admin/masters/groups';
 
 async function validateCenterAccess(req: Request, res: Response, centerId: string, action: string) {
   const center = await prisma.center.findUnique({
@@ -57,6 +60,8 @@ export const getGroups = async (req: Request, res: Response): Promise<any> => {
 
 export const createGroup = async (req: Request, res: Response): Promise<any> => {
   try {
+    if (await denyUnlessMenuPermission(req, res, MENU_PATH, 'canCreate')) return;
+
     const { groupName, groupCode, meetingDay, centerId } = req.body;
     if (!groupName || !centerId) return res.status(400).json({ error: 'Group Name and Center are required' });
 
@@ -80,6 +85,8 @@ export const createGroup = async (req: Request, res: Response): Promise<any> => 
 
 export const updateGroup = async (req: Request, res: Response): Promise<any> => {
   try {
+    if (await denyUnlessMenuPermission(req, res, MENU_PATH, 'canEdit')) return;
+
     const id = String(req.params.id);
     const existing = await prisma.group.findUnique({ where: { id }, include: { center: { include: { area: true } } } });
     if (!existing) return res.status(404).json({ error: 'Group not found' });
@@ -111,6 +118,8 @@ export const updateGroup = async (req: Request, res: Response): Promise<any> => 
 
 export const deleteGroup = async (req: Request, res: Response): Promise<any> => {
   try {
+    if (await denyUnlessMenuPermission(req, res, MENU_PATH, 'canDelete')) return;
+
     const id = String(req.params.id);
     const existing = await prisma.group.findUnique({ where: { id }, include: { center: { include: { area: true } } } });
     if (!existing) return res.status(404).json({ error: 'Group not found' });
