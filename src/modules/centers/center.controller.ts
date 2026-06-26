@@ -494,19 +494,21 @@ export const getCenterJointLiabilitySheet = async (req: Request, res: Response):
     const groupsPayload = (groupId
       ? sortedGroups.filter((g) => g.id === String(groupId))
       : sortedGroups
-    ).map((g, idx) => ({
-      id: g.id,
-      groupName: g.groupName,
-      shortLabel: g.groupCode || `G${parseGroupIndex(g.groupName) || idx + 1}`,
-      customers: center.customers
-        .filter((c) => c.groupId === g.id)
-        .map((c) => ({
-          id: c.id,
-          name: c.name,
-          customerNo: c.customerNo,
-          coApplicantName: c.coApplicant?.name || '',
-        })),
-    }));
+    )
+      .map((g, idx) => ({
+        id: g.id,
+        groupName: g.groupName,
+        shortLabel: g.groupCode || `G${parseGroupIndex(g.groupName) || idx + 1}`,
+        customers: center.customers
+          .filter((c) => c.groupId === g.id)
+          .map((c) => ({
+            id: c.id,
+            name: c.name,
+            customerNo: c.customerNo,
+            coApplicantName: c.coApplicant?.name || '',
+          })),
+      }))
+      .filter((g) => g.customers.length > 0);
 
     const unassigned = center.customers.filter((c) => !c.groupId);
     if (unassigned.length > 0 && !groupId) {
