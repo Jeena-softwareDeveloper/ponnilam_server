@@ -61,7 +61,13 @@ export const getGroups = async (req: Request, res: Response): Promise<any> => {
 
 export const createGroup = async (req: Request, res: Response): Promise<any> => {
   try {
-    if (await denyUnlessMenuPermission(req, res, MENU_PATH, 'canCreate')) return;
+    const user = (req as any).user;
+    const groupsPermErr = await assertMenuPermission(user, MENU_PATH, 'canCreate');
+    const customersCreateErr = await assertMenuPermission(user, '/admin/customers', 'canCreate');
+    const customersEditErr = await assertMenuPermission(user, '/admin/customers', 'canEdit');
+    if (groupsPermErr && customersCreateErr && customersEditErr) {
+      return res.status(403).json({ error: groupsPermErr });
+    }
 
     const { groupName, groupCode, meetingDay, centerId } = req.body;
     if (!groupName || !centerId) return res.status(400).json({ error: 'Group Name and Center are required' });
