@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import prisma from '../../utils/prisma';
 import { requireBranchAccess } from '../../utils/security.utils';
 import { denyUnlessMenuPermission } from '../../utils/master-permissions';
+import { assertMenuPermission } from '../../utils/validation.helpers';
 
 const MENU_PATH = '/admin/masters/groups';
 
@@ -118,13 +119,30 @@ export const updateGroup = async (req: Request, res: Response): Promise<any> => 
 
 export const deleteGroup = async (req: Request, res: Response): Promise<any> => {
   try {
-    if (await denyUnlessMenuPermission(req, res, MENU_PATH, 'canDelete')) return;
+    const user = (req as any).user;
+    const groupsPermErr = await assertMenuPermission(user, MENU_PATH, 'canDelete');
+    const customersPermErr = await assertMenuPermission(user, '/admin/customers', 'canEdit');
+    if (groupsPermErr && customersPermErr) {
+      return res.status(403).json({ error: groupsPermErr });
+    }
 
     const id = String(req.params.id);
     const existing = await prisma.group.findUnique({ where: { id }, include: { center: { include: { area: true } } } });
     if (!existing) return res.status(404).json({ error: 'Group not found' });
 
     requireBranchAccess((req as any).user, existing.center?.area?.branchId, 'delete a group outside your branch');
+
+    const assignedCount = await prisma.customer.count({ where: { groupId: id } });
+    if (assignedCount > 0) {
+      return res.status(400).json({
+        error: `Cannot delete this group — ${assignedCount} customer(s) are still assigned to it.`,
+      });
+    }
+
+    const centerGroupCount = await prisma.group.count({ where: { centerId: existing.centerId } });
+    if (centerGroupCount <= 1) {
+      return res.status(400).json({ error: 'Each center must keep at least one group.' });
+    }
 
     await prisma.group.delete({ where: { id } });
     return res.status(200).json({ message: 'Group deleted successfully' });
