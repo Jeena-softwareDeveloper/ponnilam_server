@@ -54,3 +54,41 @@ export async function validateCustomerCenterAssignment(
   }
   return { ok: true };
 }
+
+export async function countGroupMembers(
+  db: Db,
+  groupId: string,
+  excludeCustomerId?: string
+): Promise<number> {
+  return db.customer.count({
+    where: {
+      groupId,
+      centerMemberType: { not: 'IMPORT' },
+      ...(excludeCustomerId ? { id: { not: excludeCustomerId } } : {}),
+    },
+  });
+}
+
+export async function validateGroupMemberLimit(
+  db: Db,
+  groupId: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const group = await db.group.findUnique({
+    where: { id: groupId },
+    include: { center: true },
+  });
+  if (!group) return { ok: false, error: 'Invalid group selected' };
+
+  const limit = group.center?.totalMembers;
+  if (!limit || limit <= 0) return { ok: true };
+
+  const current = await countGroupMembers(db, groupId);
+  if (current >= limit) {
+    return {
+      ok: false,
+      error: `Group "${group.groupName}" is full (${limit} members max).`,
+    };
+  }
+
+  return { ok: true };
+}

@@ -5,7 +5,7 @@ import { requireBranchAccess } from '../../utils/security.utils';
 import { OPEN_LOAN_STATUSES } from '../../utils/prisma-enums';
 import { nextCustomerNo } from '../../utils/sequence.utils';
 import { parsePagination, paginatedResponse } from '../../utils/pagination.utils';
-import { validateCenterMemberLimit, validateCustomerCenterAssignment } from '../../utils/center-member.utils';
+import { validateCenterMemberLimit, validateCustomerCenterAssignment, validateGroupMemberLimit } from '../../utils/center-member.utils';
 import { assertMenuPermission, checkAreaScope, isValidMobile, resolveStaffId, assertUniqueCustomerMobile } from '../../utils/validation.helpers';
 
 export const createCustomer = asyncHandler(async (req: Request, res: Response) => {
@@ -282,6 +282,10 @@ export const updateCustomer = asyncHandler(async (req: Request, res: Response) =
         const customerCenterId = general.centerId !== undefined ? general.centerId : existingCustomer.centerId;
         if (!customerCenterId || group.centerId !== customerCenterId) {
           return res.status(400).json({ error: 'Group does not belong to the customer center' });
+        }
+        if (general.groupId !== existingCustomer.groupId) {
+          const groupLimitCheck = await validateGroupMemberLimit(prisma, general.groupId);
+          if (!groupLimitCheck.ok) return res.status(400).json({ error: groupLimitCheck.error });
         }
       }
       if (general.employeeId !== undefined && general.employeeId) {
