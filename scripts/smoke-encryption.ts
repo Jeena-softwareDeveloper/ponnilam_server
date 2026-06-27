@@ -1,16 +1,34 @@
+import dotenv from 'dotenv';
+import path from 'path';
 import http from 'http';
 import { wrapEncrypted, unwrapEncrypted, isEncryptedEnvelope } from '../src/utils/api-crypto';
 
-const KEY = process.env.API_ENCRYPTION_KEY || '193978a2fd0d3d11d2016772872420583eb491b746507ee1b15415a156037d69';
-process.env.API_ENCRYPTION_KEY = KEY;
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
+
+const API_KEY = process.env.API_ENCRYPTION_KEY?.trim();
+if (!API_KEY) {
+  console.error('FAIL: API_ENCRYPTION_KEY must be set in server/.env');
+  process.exit(1);
+}
+process.env.API_ENCRYPTION_KEY = API_KEY;
+
+const ADMIN_USER = process.env.E2E_ADMIN_USER || process.env.SEED_ADMIN_USERNAME || 'admin';
+const ADMIN_PASS = process.env.E2E_ADMIN_PASSWORD || process.env.SEED_ADMIN_PASSWORD;
+if (!ADMIN_PASS) {
+  console.error('FAIL: Set SEED_ADMIN_PASSWORD or E2E_ADMIN_PASSWORD in server/.env');
+  process.exit(1);
+}
+
+const API_HOST = process.env.SMOKE_API_HOST || 'localhost';
+const API_PORT = Number(process.env.PORT || 5000);
 
 function request(method: string, path: string, body?: unknown): Promise<{ status: number; headers: http.IncomingHttpHeaders; json: unknown }> {
   return new Promise((resolve, reject) => {
     const payload = body ? JSON.stringify(body) : undefined;
     const req = http.request(
       {
-        hostname: 'localhost',
-        port: 5000,
+        hostname: API_HOST,
+        port: API_PORT,
         path,
         method,
         headers: {
@@ -46,16 +64,16 @@ async function main() {
   if (!isEncryptedEnvelope(health.json)) console.log('   OK — health is not encrypted');
 
   const plainLogin = await request('POST', '/api/v1/auth/login', {
-    username: 'admin',
-    password: 'password123',
+    username: ADMIN_USER,
+    password: ADMIN_PASS,
   });
   console.log('\n2. POST login plain body:', plainLogin.status, plainLogin.json);
   if (plainLogin.status === 400) console.log('   OK — plain body rejected');
   else console.log('   WARN — expected 400 for plain body');
 
   const encLogin = await request('POST', '/api/v1/auth/login', wrapEncrypted({
-    username: 'admin',
-    password: 'password123',
+    username: ADMIN_USER,
+    password: ADMIN_PASS,
   }));
   console.log('\n3. POST login encrypted body:', encLogin.status);
   console.log('   Response encrypted:', isEncryptedEnvelope(encLogin.json));

@@ -1,9 +1,20 @@
 // @ts-nocheck
+import crypto from 'crypto';
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
-import { seedDemoData } from './seed-demo-data';
 
 const prisma = new PrismaClient();
+
+function resolveSeedPassword(envName: string, label: string): string {
+  const fromEnv = process.env[envName]?.trim();
+  if (fromEnv) return fromEnv;
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(`${envName} is required when seeding in production`);
+  }
+  const generated = crypto.randomBytes(12).toString('base64url');
+  console.log(`  Generated temporary ${label} password: ${generated}`);
+  return generated;
+}
 
 async function main() {
   console.log('Start seeding...');
@@ -151,21 +162,24 @@ async function main() {
   });
 
   // 3. Create Admin Staff (One Admin)
-  const seedPassword = process.env.SEED_ADMIN_PASSWORD || 'password123';
+  const seedPassword = resolveSeedPassword('SEED_ADMIN_PASSWORD', 'admin');
   const hashedPassword = await bcrypt.hash(seedPassword, 10);
-  const mustChangePassword = !process.env.SEED_ADMIN_PASSWORD;
+  const mustChangePassword = !process.env.SEED_ADMIN_PASSWORD?.trim();
+  const adminPhone = process.env.SEED_ADMIN_PHONE?.trim() || '9000000000';
+  const adminEmail = process.env.SEED_ADMIN_EMAIL?.trim() || 'admin@localhost';
+  const adminUsername = process.env.SEED_ADMIN_USERNAME?.trim() || 'admin';
 
   const adminStaff = await prisma.staff.upsert({
-    where: { phone: '9000000000' },
+    where: { phone: adminPhone },
     update: {
       password: hashedPassword,
       mustChangePassword: mustChangePassword,
     },
     create: {
       name: 'Admin System',
-      username: 'admin',
-      email: 'admin@financeos.com',
-      phone: '9000000000',
+      username: adminUsername,
+      email: adminEmail,
+      phone: adminPhone,
       password: hashedPassword,
       isActive: true,
       mustChangePassword: mustChangePassword,
@@ -174,9 +188,9 @@ async function main() {
     },
   });
 
-  if (!process.env.SEED_ADMIN_PASSWORD) {
+  if (!process.env.SEED_ADMIN_PASSWORD?.trim()) {
     console.log('═══════════════════════════════════════════');
-    console.log('  Admin login — username: admin');
+    console.log(`  Admin login — username: ${adminUsername}`);
     console.log(`  Temporary password: ${seedPassword}`);
     console.log('  Change this password immediately after first login.');
     console.log('═══════════════════════════════════════════');
@@ -204,10 +218,11 @@ async function main() {
     }
   }
 
-  // 5. Demo data — 3 branches, 4 collection staff, 5 centers
-  await seedDemoData(prisma, staffRole.id, process.env.SEED_STAFF_PASSWORD || 'password123');
+  // NOTE: Demo data (branches, staff, centers, groups, customers, loans,
+  // collections) is intentionally NOT seeded. Production starts clean with
+  // only menus + the admin account. Add real data through the UI.
 
-  console.log('Seeding finished.');
+  console.log('Seeding finished — menus + admin only (no demo data).');
 }
 
 main()

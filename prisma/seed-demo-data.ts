@@ -444,7 +444,7 @@ async function ensureCustomerWithLoan(
 export async function seedDemoData(
   prisma: PrismaClient,
   staffRoleId: string,
-  staffPasswordPlain = 'password123'
+  staffPasswordPlain: string
 ) {
   const totalCenters = DEMO_STAFF.reduce((n, s) => n + s.centers.length, 0);
   console.log(

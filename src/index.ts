@@ -37,16 +37,22 @@ const app = express();
 const isLocalDevOrigin = (origin: string) =>
   /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin);
 
+const devOrigins = [
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'http://localhost:3002',
+];
+
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
-  : [
-      'http://localhost:3000',
-      'http://localhost:3001',
-      'http://localhost:3002',
-      'https://ponnilam-ui.vercel.app',
-      'https://ponnilamfinance.com',
-      'https://app.ponnilamfincorp.com',
-    ];
+  : process.env.NODE_ENV === 'production'
+    ? []
+    : devOrigins;
+
+if (process.env.NODE_ENV === 'production' && allowedOrigins.length === 0) {
+  console.error('FATAL: ALLOWED_ORIGINS must be set in production (comma-separated frontend URLs).');
+  process.exit(1);
+}
 
 app.use(cors({
   origin: (origin, callback) => {

@@ -9,12 +9,14 @@ import { wrapEncrypted, unwrapEncrypted, isEncryptedEnvelope } from '../src/util
 dotenv.config();
 
 const API = '/api/v1';
-const ADMIN_USER = process.env.ADMIN_USERNAME || process.env.E2E_ADMIN_USER || 'admin';
-const ADMIN_PASS =
-  process.env.ADMIN_PASSWORD ||
-  process.env.E2E_ADMIN_PASSWORD ||
-  process.env.SEED_ADMIN_PASSWORD ||
-  'password123';
+const ADMIN_USER = process.env.E2E_ADMIN_USER || process.env.SEED_ADMIN_USERNAME || 'admin';
+const ADMIN_PASS = process.env.E2E_ADMIN_PASSWORD || process.env.SEED_ADMIN_PASSWORD;
+const STAFF_PASS = process.env.E2E_STAFF_PASSWORD || process.env.SEED_STAFF_PASSWORD;
+
+if (!ADMIN_PASS) {
+  console.error('Set SEED_ADMIN_PASSWORD or E2E_ADMIN_PASSWORD in server/.env before running full-api-test');
+  process.exit(1);
+}
 
 type Result = { method: string; path: string; status: number; ms: number; ok: boolean; note?: string };
 
@@ -25,8 +27,12 @@ let isAdmin = false;
 
 const LOGIN_CANDIDATES: [string, string][] = [
   [ADMIN_USER, ADMIN_PASS],
-  ['harish', 'password123'],
-  ['jayanthi', 'password123'],
+  ...(STAFF_PASS
+    ? [
+        ['harish', STAFF_PASS] as [string, string],
+        ['jayanthi', STAFF_PASS] as [string, string],
+      ]
+    : []),
 ];
 
 async function tryLogin(): Promise<boolean> {
@@ -200,7 +206,7 @@ async function main() {
 
   const login = await tryLogin();
   if (!token) {
-    console.error('Login failed for all credentials — set ADMIN_PASSWORD in server/.env');
+    console.error('Login failed — set SEED_ADMIN_PASSWORD (and SEED_STAFF_PASSWORD for staff fallback) in server/.env');
     printReport();
     process.exit(1);
   }
