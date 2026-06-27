@@ -194,7 +194,6 @@ export const updateBranch = async (req: Request, res: Response): Promise<any> =>
             data: dataToUpdate
           });
         } else {
-          // If no staff existed, create one
           if (!adminPassword) {
             dataToUpdate.password = await bcrypt.hash(generateTemporaryPassword(), 10);
             dataToUpdate.mustChangePassword = true;

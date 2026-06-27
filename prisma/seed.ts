@@ -204,7 +204,7 @@ async function main() {
     }
   }
 
-  // 5. Demo data — 5 field staff mapped to centers, customers & loans
+  // 5. Demo data — 3 branches, 4 collection staff, 5 centers
   await seedDemoData(prisma, staffRole.id, process.env.SEED_STAFF_PASSWORD || 'password123');
 
   console.log('Seeding finished.');

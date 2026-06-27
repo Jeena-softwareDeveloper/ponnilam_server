@@ -13,7 +13,6 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'Username and password are required' });
   }
 
-  // 1. Database Check
   const staff = await prisma.staff.findFirst({
     where: {
       OR: [
@@ -47,19 +46,19 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
     return res.status(401).json({ error: 'Invalid credentials' });
   }
 
-    // Generate JWT with strict branch assignment
-    const jwtSecret = process.env.JWT_SECRET;
-    if (!jwtSecret) {
-      throw new Error('JWT_SECRET is not configured. Server startup failed.');
-    }
-    const token = jwt.sign(
-      {
-        id: staff.id,
-        branchId: staff.branchId || staff.area?.branchId || null
-      },
-      jwtSecret,
-      { expiresIn: '1d' }
-    );
+  // Generate JWT with strict branch assignment
+  const jwtSecret = process.env.JWT_SECRET;
+  if (!jwtSecret) {
+    throw new Error('JWT_SECRET is not configured. Server startup failed.');
+  }
+  const token = jwt.sign(
+    {
+      id: staff.id,
+      branchId: staff.branchId || staff.area?.branchId || null
+    },
+    jwtSecret,
+    { expiresIn: '1d' }
+  );
 
   if (isFirstLogin || staff.mustChangePassword) {
     return res.status(200).json({
@@ -77,7 +76,6 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
     });
   }
 
-  // Audit Log the login
   await prisma.auditLog.create({
     data: {
       action: 'LOGIN',
@@ -109,8 +107,6 @@ export const getAuthMenus = asyncHandler(async (req: Request, res: Response) => 
   // Admin (env or role) gets all menus with full CRUD
   const buildFullAccess = (menus: any[]) =>
     menus.map(m => ({ ...m, canView: true, canCreate: true, canEdit: true, canDelete: true }));
-
-
 
   const staff = await prisma.staff.findUnique({
     where: { id: user.id },
@@ -159,7 +155,6 @@ export const getAuthMenus = asyncHandler(async (req: Request, res: Response) => 
     }));
   }
 
-  // Filter to only menus with canView = true
   return res.status(200).json(allowedEntries.filter((m: any) => m.canView !== false));
 });
 

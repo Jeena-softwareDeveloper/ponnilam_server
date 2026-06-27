@@ -1,8 +1,6 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-
-// Import module routes
 import authRoutes from './modules/auth/auth.routes';
 import centerRoutes from './modules/centers/center.routes';
 import branchRoutes from './modules/branches/branch.routes';
@@ -21,33 +19,20 @@ import reportRoutes from './modules/reports/report.routes';
 import dashboardRoutes from './modules/dashboard/dashboard.routes';
 import notificationRoutes from './modules/notifications/notifications.routes';
 import auditLogRoutes from './modules/auditLogs/auditLog.routes';
-
-// Import Middlewares
 import { authenticateToken, branchScope } from './middlewares/auth.middleware';
 import { requireAdmin } from './middlewares/admin.middleware';
 import { auditMiddleware } from './middlewares/audit.middleware';
 import { errorHandler } from './middlewares/error.middleware';
 import { decryptRequestBody, encryptResponseBody } from './middlewares/encryption.middleware';
-import { isApiEncryptionEnabled } from './utils/api-crypto';
 
 dotenv.config();
 
-// Fail fast if JWT_SECRET is not set in production
 if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
   console.error('FATAL: JWT_SECRET environment variable is not set. Refusing to start.');
   process.exit(1);
-} else if (!process.env.JWT_SECRET) {
-  console.warn('WARNING: JWT_SECRET is not set. API requests will fail until it is configured in .env');
-}
-
-if (isApiEncryptionEnabled()) {
-  console.log('API payload encryption is enabled for /api/v1/*');
-} else if (process.env.NODE_ENV === 'production') {
-  console.warn('WARNING: API_ENCRYPTION_KEY is not set. API responses are sent in plain JSON.');
 }
 
 const app = express();
-const port = process.env.PORT || 5000;
 
 const isLocalDevOrigin = (origin: string) =>
   /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin);
@@ -82,16 +67,11 @@ app.use(express.json());
 app.use(decryptRequestBody);
 app.use(encryptResponseBody);
 
-// Main Routes Setup
 app.use('/api/v1/auth', authRoutes);
 
-// Protect all masters routes with authenticateToken
+// Protect all masters routes with authenticateToken + branch scoping
 app.use('/api/v1/masters', authenticateToken);
-
-// Apply Branch Scoping (for Branch Users)
 app.use('/api/v1/masters', branchScope);
-
-// Apply specific routes and audit logs
 app.use('/api/v1/masters/branches', requireAdmin, auditMiddleware('Branch'), branchRoutes);
 app.use('/api/v1/masters/states', requireAdmin, auditMiddleware('State'), stateRoutes);
 app.use('/api/v1/masters/districts', requireAdmin, auditMiddleware('District'), districtRoutes);
@@ -103,10 +83,6 @@ app.use('/api/v1/masters/groups', auditMiddleware('Group'), groupRoutes);
 app.use('/api/v1/masters/areas', auditMiddleware('Area'), areaRoutes);
 app.use('/api/v1/masters/staffs', auditMiddleware('Staff'), staffRoutes);
 
-// Customer Routes (Can be under /customers directly or /masters/customers)
-// The prompt implies it's a new Phase, so we can group it under /customers
-// But we still want it protected and branch-scoped. 
-// We'll put it under a new prefix /api/v1/customers that applies the middlewares.
 app.use('/api/v1/customers', authenticateToken, branchScope, auditMiddleware('Customer'), customerRoutes);
 app.use('/api/v1/loans', authenticateToken, branchScope, auditMiddleware('Loan'), loanRoutes);
 app.use('/api/v1/collections', authenticateToken, branchScope, auditMiddleware('Collection'), collectionRoutes);
@@ -115,12 +91,10 @@ app.use('/api/v1/dashboard', authenticateToken, branchScope, dashboardRoutes);
 app.use('/api/v1/notifications', authenticateToken, notificationRoutes);
 app.use('/api/v1/audit-logs', authenticateToken, branchScope, auditLogRoutes);
 
-// Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: Date.now(), service: 'NBFC API' });
 });
 
-// Base route
 app.get('/', (req, res) => {
   res.json({ message: 'NBFC Finance API is running' });
 });
@@ -130,6 +104,4 @@ app.use(errorHandler);
 
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
-  console.log(`✅ Server is running on port ${PORT}`);
-});
+app.listen(PORT);

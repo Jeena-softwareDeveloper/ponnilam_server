@@ -43,7 +43,7 @@ const buildDateWhere = (startDate?: string, endDate?: string, type?: string) => 
   return { gte: dayStart };
 };
 
-// 1. Collection Report (existing - improved)
+// 1. Collection Report
 export const getCollectionReport = async (req: Request, res: Response) => {
   try {
     if (!(await ensureReportAccess(req, res))) return;
@@ -178,14 +178,25 @@ export const getCenterCustomerReport = async (req: Request, res: Response) => {
     const customers = await prisma.customer.findMany({
       where,
       include: {
-        center: { include: { employee: { select: { id: true, name: true, phone: true, username: true } } } },
+        center: {
+          select: {
+            id: true,
+            name: true,
+            code: true,
+            totalMembers: true,
+            employee: { select: { id: true, name: true, phone: true, username: true } },
+          },
+        },
         area: { include: { branch: true } },
+        group: { select: { id: true, groupName: true, groupCode: true } },
         loans: {
           where: { status: { in: LOAN_COLLECTIBLE_STATUSES } },
           select: { 
             loanNumber: true, 
             outstandingAmount: true, 
-            perDueAmount: true, 
+            perDueAmount: true,
+            noOfDues: true,
+            totalDueAmount: true,
             status: true, 
             amount: true,
             schedules: {

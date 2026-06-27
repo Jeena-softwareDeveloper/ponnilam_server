@@ -10,6 +10,15 @@ import {
 import { LoanStatus } from '../src/utils/prisma-enums';
 import { nextCustomerNo } from '../src/utils/sequence.utils';
 
+/** Max members per group — when exceeded, center splits into Group B, then Group C */
+const PER_GROUP_LIMIT = 3;
+
+const GROUP_DEFS = [
+  { groupName: 'Group A', groupCode: 'GA' },
+  { groupName: 'Group B', groupCode: 'GB' },
+  { groupName: 'Group C', groupCode: 'GC' },
+] as const;
+
 type CustomerDef = { name: string; mobile: string; altPhone?: string };
 
 type StaffBundle = {
@@ -20,6 +29,28 @@ type StaffBundle = {
   areaName: string;
   centers: { name: string; code: string; customers: CustomerDef[] }[];
 };
+
+/** 3 branches · 4 collection staff · 5 centers */
+const BRANCH_DEFS = [
+  {
+    code: 'SAT',
+    name: 'Sathyamangalam',
+    location: '13/04, VSB Nest, Sri Venugopalasamy Temple Street, Sathyamangalam - 638 401',
+    phone: '9944533403',
+  },
+  {
+    code: 'ANT',
+    name: 'Anthiur',
+    location: 'Anthiur Main Road, Erode District - 638 501',
+    phone: '9944533410',
+  },
+  {
+    code: 'BHA',
+    name: 'Bhavani',
+    location: 'Mettur Road, Bhavani, Erode District - 638 301',
+    phone: '9944533420',
+  },
+];
 
 const DEMO_STAFF: StaffBundle[] = [
   {
@@ -39,6 +70,9 @@ const DEMO_STAFF: StaffBundle[] = [
           { name: 'Sumathi P', mobile: '9500683258' },
           { name: 'Latha M', mobile: '9500683259' },
           { name: 'Meena K', mobile: '9500683260' },
+          { name: 'Padma N', mobile: '9500683265' },
+          { name: 'Revathi S', mobile: '9500683266' },
+          { name: 'Suganthi V', mobile: '9500683267' },
         ],
       },
       {
@@ -71,43 +105,6 @@ const DEMO_STAFF: StaffBundle[] = [
           { name: 'Shanthi M', mobile: '9500683275' },
         ],
       },
-      {
-        name: 'JAYANTHI NORTH BLOCK',
-        code: 'SAT31',
-        customers: [
-          { name: 'Kamala R', mobile: '9500683276' },
-          { name: 'Ponni T', mobile: '9500683277' },
-          { name: 'Selvi G', mobile: '9500683278' },
-        ],
-      },
-    ],
-  },
-  {
-    name: 'Bhuvaneswar S',
-    username: 'bhuvan',
-    phone: '9944533405',
-    branchCode: 'SAT',
-    areaName: 'Kasipalayam',
-    centers: [
-      {
-        name: 'BHUVANESWAR KASIPALAYAM',
-        code: 'SAT40',
-        customers: [
-          { name: 'Bhuvaneswar K', mobile: '9500683281' },
-          { name: 'Murugan V', mobile: '9500683282' },
-          { name: 'Selvam R', mobile: '9500683283' },
-          { name: 'Kumar P', mobile: '9500683284' },
-        ],
-      },
-      {
-        name: 'BHUVANESWAR EAST',
-        code: 'SAT41',
-        customers: [
-          { name: 'Radha S', mobile: '9500683285' },
-          { name: 'Mani T', mobile: '9500683286' },
-          { name: 'Geetha L', mobile: '9500683287' },
-        ],
-      },
     ],
   },
   {
@@ -118,7 +115,7 @@ const DEMO_STAFF: StaffBundle[] = [
     areaName: 'Anthiur Main',
     centers: [
       {
-        name: 'priya1',
+        name: 'PRIYA ANTHIUR MAIN',
         code: 'ANT01',
         customers: [
           { name: 'Jeena S', mobile: '9500683291', altPhone: '9500683292' },
@@ -133,12 +130,12 @@ const DEMO_STAFF: StaffBundle[] = [
     name: 'Murugan K',
     username: 'murugan',
     phone: '9944533407',
-    branchCode: 'ANT',
-    areaName: 'Anthiur West',
+    branchCode: 'BHA',
+    areaName: 'Bhavani Town',
     centers: [
       {
-        name: 'Anthiur Center 2',
-        code: 'ANT02',
+        name: 'MURUGAN BHAVANI TOWN',
+        code: 'BHA01',
         customers: [
           { name: 'Murugan A', mobile: '9500683301' },
           { name: 'Lakshmi V', mobile: '9500683302' },
@@ -148,21 +145,6 @@ const DEMO_STAFF: StaffBundle[] = [
         ],
       },
     ],
-  },
-];
-
-const BRANCH_DEFS = [
-  {
-    code: 'SAT',
-    name: 'Sathyamangalam',
-    location: '13/04, VSB Nest, Sri Venugopalasamy Temple Street, Sathyamangalam - 638 401',
-    phone: '9944533403',
-  },
-  {
-    code: 'ANT',
-    name: 'Anthiur',
-    location: 'Anthiur Main Road, Erode District',
-    phone: '9944533410',
   },
 ];
 
@@ -277,7 +259,7 @@ async function ensureCenter(
   areaId: string,
   employeeId: string,
   centerDef: { name: string; code: string },
-  memberCount: number
+  _memberCount: number
 ) {
   const center = await prisma.center.upsert({
     where: { code: centerDef.code },
@@ -285,7 +267,7 @@ async function ensureCenter(
       name: centerDef.name,
       areaId,
       employeeId,
-      totalMembers: memberCount,
+      totalMembers: PER_GROUP_LIMIT,
       isActive: true,
       repaymentType: 'WEEKLY',
       disbursMode: 'CASH',
@@ -295,13 +277,57 @@ async function ensureCenter(
       code: centerDef.code,
       areaId,
       employeeId,
-      totalMembers: memberCount,
+      totalMembers: PER_GROUP_LIMIT,
       isActive: true,
       repaymentType: 'WEEKLY',
       disbursMode: 'CASH',
     },
   });
   return center;
+}
+
+function groupsNeededForCount(customerCount: number) {
+  if (customerCount <= PER_GROUP_LIMIT) return 1;
+  if (customerCount <= PER_GROUP_LIMIT * 2) return 2;
+  return 3;
+}
+
+async function ensureCenterGroups(
+  prisma: PrismaClient,
+  centerId: string,
+  centerCode: string,
+  customerCount: number
+) {
+  const needed = groupsNeededForCount(customerCount);
+  const groups: { id: string; groupName: string }[] = [];
+
+  for (let i = 0; i < needed; i++) {
+    const def = GROUP_DEFS[i];
+    const groupCode = `${centerCode}-${def.groupCode}`;
+    const group = await prisma.group.upsert({
+      where: {
+        centerId_groupName: { centerId, groupName: def.groupName },
+      },
+      update: {
+        groupCode,
+        isActive: true,
+      },
+      create: {
+        centerId,
+        groupName: def.groupName,
+        groupCode,
+        isActive: true,
+      },
+    });
+    groups.push(group);
+  }
+
+  return groups;
+}
+
+function groupIdForCustomerIndex(groups: { id: string }[], customerIndex: number) {
+  const slot = Math.floor(customerIndex / PER_GROUP_LIMIT);
+  return groups[Math.min(slot, groups.length - 1)]?.id || null;
 }
 
 async function ensureCustomerWithLoan(
@@ -315,6 +341,7 @@ async function ensureCustomerWithLoan(
     packageId: string;
     customer: CustomerDef;
     loanSerial: number;
+    groupId: string | null;
   }
 ) {
   let customer = await prisma.customer.findFirst({
@@ -335,6 +362,7 @@ async function ensureCustomerWithLoan(
           residenceType: 'OWNED',
           areaId: opts.areaId,
           centerId: opts.centerId,
+          groupId: opts.groupId,
           employeeId: opts.staffId,
           centerMemberType: 'MEMBER',
           isActive: true,
@@ -347,6 +375,7 @@ async function ensureCustomerWithLoan(
       data: {
         areaId: opts.areaId,
         centerId: opts.centerId,
+        groupId: opts.groupId,
         employeeId: opts.staffId,
         mobile: opts.customer.mobile,
         phone: opts.customer.altPhone || opts.customer.mobile,
@@ -368,7 +397,7 @@ async function ensureCustomerWithLoan(
 
   const principal = 10000;
   const noOfDues = 20;
-  const { perDueAmount, totalDueAmount, lastEmiAmount } = computeFlatEmi(principal, 30, noOfDues);
+  const { perDueAmount, totalDueAmount } = computeFlatEmi(principal, 30, noOfDues);
   const firstDueDate = new Date();
   firstDueDate.setDate(firstDueDate.getDate() - 14);
 
@@ -417,7 +446,10 @@ export async function seedDemoData(
   staffRoleId: string,
   staffPasswordPlain = 'password123'
 ) {
-  console.log('Seeding demo geography, 5 staff, centers, customers & loans...');
+  const totalCenters = DEMO_STAFF.reduce((n, s) => n + s.centers.length, 0);
+  console.log(
+    `Seeding demo data — ${BRANCH_DEFS.length} branches, ${DEMO_STAFF.length} collection staff, ${totalCenters} centers...`
+  );
 
   const staffPasswordHash = await bcrypt.hash(staffPasswordPlain, 10);
   const { branches } = await ensureGeography(prisma);
@@ -446,6 +478,13 @@ export async function seedDemoData(
         centerDef.customers.length
       );
 
+      const groups = await ensureCenterGroups(
+        prisma,
+        center.id,
+        centerDef.code,
+        centerDef.customers.length
+      );
+
       for (const [index, customerDef] of centerDef.customers.entries()) {
         await ensureCustomerWithLoan(prisma, {
           branchId: branch.id,
@@ -456,17 +495,26 @@ export async function seedDemoData(
           packageId: loanPackage.id,
           customer: customerDef,
           loanSerial: index + 1,
+          groupId: groupIdForCustomerIndex(groups, index),
         });
       }
     }
 
     console.log(
-      `  ✓ ${bundle.name} (@${bundle.username}) — ${bundle.centers.length} center(s), ` +
+      `  ✓ ${bundle.name} (@${bundle.username}) — branch ${bundle.branchCode}, ` +
+        `${bundle.centers.length} center(s), ` +
         `${bundle.centers.reduce((n, c) => n + c.customers.length, 0)} customers`
     );
   }
 
-  console.log('Demo staff login — username + password:');
+  console.log('');
+  console.log('Demo summary:');
+  console.log(`  Branches : ${BRANCH_DEFS.map((b) => b.name).join(', ')}`);
+  console.log(`  Staff    : ${DEMO_STAFF.length} collection officers`);
+  console.log(`  Centers  : ${totalCenters}`);
+  console.log(`  Groups   : Group A / Group B (split) / Group C — ${PER_GROUP_LIMIT} members per group`);
+  console.log('');
+  console.log('Collection staff login (username / password):');
   for (const bundle of DEMO_STAFF) {
     console.log(`  ${bundle.username} / ${staffPasswordPlain}`);
   }
