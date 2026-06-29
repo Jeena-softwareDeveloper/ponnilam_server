@@ -125,7 +125,7 @@ model Center {
 
 model Group {
   id         String  @id @default(uuid())
-  groupCode  String? @unique
+  groupCode  String?
   groupName  String
   meetingDay String?
   isActive   Boolean @default(true)
@@ -139,6 +139,7 @@ model Group {
   updatedAt DateTime @updatedAt
 
   @@unique([centerId, groupName])
+  @@unique([centerId, groupCode])
 }
 
 model Role {

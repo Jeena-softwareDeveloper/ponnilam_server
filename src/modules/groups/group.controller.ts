@@ -85,7 +85,11 @@ export const createGroup = async (req: Request, res: Response): Promise<any> => 
     });
     return res.status(201).json(group);
   } catch (error: any) {
-    if (error.code === 'P2002') return res.status(409).json({ error: 'Group name already exists in this center' });
+    if (error.code === 'P2002') {
+      return res.status(409).json({
+        error: 'A group with this name or code already exists in this center',
+      });
+    }
     return handleError(res, error);
   }
 };
