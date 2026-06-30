@@ -339,9 +339,7 @@ export const importCustomersToNewCenter = async (req: Request, res: Response): P
       }
     }
 
-    const eligible = sourceCenter.customers.filter((c) =>
-      !c.loans.some((l) => OPEN_LOAN_STATUSES.includes(l.status as typeof OPEN_LOAN_STATUSES[number]))
-    );
+    const eligible = sourceCenter.customers;
 
     let idsToImport: string[] = [];
     if (customerIds?.length) {
@@ -351,10 +349,11 @@ export const importCustomersToNewCenter = async (req: Request, res: Response): P
     }
 
     if (idsToImport.length === 0) {
-      return res.status(400).json({ error: 'No eligible customers to import. Customers need a closed first loan or no active loan.' });
+      return res.status(400).json({ error: 'Select at least one customer from the source center to import.' });
     }
 
     const generatedCode = await generateCenterCode(newCenterName.trim());
+    const groupCodePrefix = generatedCode.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12) || 'CTR';
 
     const result = await prisma.$transaction(async (tx) => {
       const newCenter = await tx.center.create({
@@ -364,11 +363,19 @@ export const importCustomersToNewCenter = async (req: Request, res: Response): P
           centerTime: sourceCenter.centerTime,
           repaymentType: sourceCenter.repaymentType,
           disbursMode: sourceCenter.disbursMode,
-          totalMembers: 0,
+          totalMembers: sourceCenter.totalMembers || 0,
           areaId: sourceCenter.areaId,
           employeeId: sourceCenter.employeeId,
         },
         include: { employee: true, area: true },
+      });
+
+      const defaultGroup = await tx.group.create({
+        data: {
+          centerId: newCenter.id,
+          groupName: 'Group 1',
+          groupCode: `${groupCodePrefix}-G1`,
+        },
       });
 
       await tx.customer.updateMany({
@@ -376,11 +383,11 @@ export const importCustomersToNewCenter = async (req: Request, res: Response): P
         data: {
           centerId: newCenter.id,
           centerMemberType: 'IMPORT',
-          groupId: null,
+          groupId: defaultGroup.id,
         },
       });
 
-      return { newCenter, importedCount: idsToImport.length };
+      return { newCenter, importedCount: idsToImport.length, groupId: defaultGroup.id };
     });
 
     return res.status(201).json(result);
