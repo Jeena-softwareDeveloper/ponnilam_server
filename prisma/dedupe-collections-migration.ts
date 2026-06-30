@@ -2,7 +2,8 @@
  * Resolve duplicate (loanId, collectionDay, isVoided) rows before applying
  * @@unique([loanId, collectionDay, isVoided]) on Collection.
  *
- * Run BEFORE `prisma db push` if push fails with P2002 on that constraint.
+ * Uses raw SQL for collectionDay so it runs even when Prisma Client was not
+ * regenerated yet (db push failed before generate).
  *
  *   npx ts-node prisma/dedupe-collections-migration.ts
  *   npx ts-node prisma/dedupe-collections-migration.ts --dry-run
@@ -25,60 +26,112 @@ type CollectionRow = {
   isVoided: boolean;
   createdAt: Date;
   loanId: string;
-  _scheduleLinks: number;
+  scheduleLinks: number;
 };
 
+async function collectionDayColumnExists(): Promise<boolean> {
+  const cols = await prisma.$queryRaw<{ column_name: string }[]>`
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'Collection'
+      AND column_name = 'collectionDay'
+  `;
+  return cols.length > 0;
+}
+
+async function ensureCollectionDayColumn(): Promise<void> {
+  if (await collectionDayColumnExists()) return;
+  if (dryRun) {
+    console.log('  [dry-run] Would add Collection.collectionDay column');
+    return;
+  }
+  await prisma.$executeRawUnsafe(
+    `ALTER TABLE "Collection" ADD COLUMN IF NOT EXISTS "collectionDay" TEXT NOT NULL DEFAULT ''`
+  );
+  console.log('  Added Collection.collectionDay column');
+}
+
 async function backfillCollectionDays(): Promise<number> {
-  const rows = await prisma.collection.findMany({
-    select: { id: true, trnDate: true, collectionDay: true },
-  });
+  const hasColumn = await collectionDayColumnExists();
+
+  const allRows = hasColumn
+    ? await prisma.$queryRaw<{ id: string; trnDate: Date; collectionDay: string }[]>`
+        SELECT id, "trnDate", "collectionDay" FROM "Collection"
+      `
+    : await prisma.$queryRaw<{ id: string; trnDate: Date }[]>`
+        SELECT id, "trnDate" FROM "Collection"
+      `;
+
   let updated = 0;
-  for (const row of rows) {
+  for (const row of allRows) {
     const day = toCollectionDay(row.trnDate);
-    if (row.collectionDay !== day) {
-      if (!dryRun) {
-        await prisma.collection.update({
-          where: { id: row.id },
-          data: { collectionDay: day },
-        });
-      }
+    const current = 'collectionDay' in row ? row.collectionDay : '';
+    if (current !== day) {
       updated += 1;
+      if (!dryRun && hasColumn) {
+        await prisma.$executeRaw`
+          UPDATE "Collection" SET "collectionDay" = ${day} WHERE id = ${row.id}
+        `;
+      }
     }
   }
   return updated;
 }
 
 async function loadCollectionsWithScheduleCounts(): Promise<CollectionRow[]> {
-  const rows = await prisma.collection.findMany({
-    select: {
-      id: true,
-      trnNumber: true,
-      trnDate: true,
-      collectionDay: true,
-      amount: true,
-      isVoided: true,
-      createdAt: true,
-      loanId: true,
-      _count: { select: { schedules: true } },
-    },
-    orderBy: [{ loanId: 'asc' }, { collectionDay: 'asc' }, { createdAt: 'asc' }],
-  });
+  const hasColumn = await collectionDayColumnExists();
+
+  if (hasColumn) {
+    return prisma.$queryRaw<CollectionRow[]>`
+      SELECT
+        c.id,
+        c."trnNumber",
+        c."trnDate",
+        c."collectionDay",
+        c.amount,
+        c."isVoided",
+        c."createdAt",
+        c."loanId",
+        (
+          SELECT COUNT(*)::int
+          FROM "LoanSchedule" ls
+          WHERE ls."collectionId" = c.id
+        ) AS "scheduleLinks"
+      FROM "Collection" c
+      ORDER BY c."loanId", c."collectionDay", c."createdAt"
+    `;
+  }
+
+  const rows = await prisma.$queryRaw<
+    Omit<CollectionRow, 'collectionDay'>[]
+  >`
+    SELECT
+      c.id,
+      c."trnNumber",
+      c."trnDate",
+      c.amount,
+      c."isVoided",
+      c."createdAt",
+      c."loanId",
+      (
+        SELECT COUNT(*)::int
+        FROM "LoanSchedule" ls
+        WHERE ls."collectionId" = c.id
+      ) AS "scheduleLinks"
+    FROM "Collection" c
+    ORDER BY c."loanId", c."trnDate", c."createdAt"
+  `;
+
   return rows.map((r) => ({
-    id: r.id,
-    trnNumber: r.trnNumber,
-    trnDate: r.trnDate,
-    collectionDay: r.collectionDay,
-    amount: r.amount,
-    isVoided: r.isVoided,
-    createdAt: r.createdAt,
-    loanId: r.loanId,
-    _scheduleLinks: r._count.schedules,
+    ...r,
+    collectionDay: toCollectionDay(r.trnDate),
   }));
 }
 
 function pickKeeper(group: CollectionRow[]): CollectionRow {
   return [...group].sort((a, b) => {
-    if (b._scheduleLinks !== a._scheduleLinks) return b._scheduleLinks - a._scheduleLinks;
+    if (b.scheduleLinks !== a.scheduleLinks) return b.scheduleLinks - a.scheduleLinks;
     if (b.amount !== a.amount) return b.amount - a.amount;
     return a.createdAt.getTime() - b.createdAt.getTime();
   })[0];
@@ -149,14 +202,17 @@ async function replayLoanCollections(loanId: string): Promise<void> {
 async function main() {
   console.log(dryRun ? '[dry-run] Analyzing collection duplicates...' : 'Fixing collection duplicates...');
 
+  await ensureCollectionDayColumn();
+
   const backfilled = await backfillCollectionDays();
-  console.log(`  collectionDay backfill: ${backfilled} row(s) updated`);
+  console.log(`  collectionDay backfill: ${backfilled} row(s) ${dryRun ? 'would be ' : ''}updated`);
 
   const rows = await loadCollectionsWithScheduleCounts();
   const duplicateGroups = [...groupDuplicates(rows).entries()].filter(([, g]) => g.length > 1);
 
   if (duplicateGroups.length === 0) {
     console.log('No duplicate (loanId, collectionDay, isVoided) groups found.');
+    console.log('\nDone. You can now run: npx prisma db push && npx prisma generate');
     return;
   }
 
@@ -202,7 +258,7 @@ async function main() {
     throw new Error(`${remaining} duplicate group(s) still remain after cleanup`);
   }
 
-  console.log('\nDone. You can now run: npm run db:push');
+  console.log('\nDone. You can now run: npx prisma db push && npx prisma generate');
 }
 
 main()
