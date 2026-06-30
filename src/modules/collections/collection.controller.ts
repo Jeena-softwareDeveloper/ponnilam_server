@@ -2,7 +2,7 @@ import prisma from '../../utils/prisma';
 import { Request, Response } from 'express';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { requireBranchAccess } from '../../utils/security.utils';
-import { getNextTrnNumber, processLoanCollection, voidCollection } from '../../utils/collection.utils';
+import { processLoanCollection, voidCollection } from '../../utils/collection.utils';
 import { LOAN_COLLECTIBLE_STATUSES } from '../../utils/prisma-enums';
 import { getDayRange, getDateRangeBounds } from '../../utils/date.utils';
 import { isAdminUser } from '../../utils/user.utils';
@@ -43,19 +43,17 @@ export const createCollection = asyncHandler(async (req: Request, res: Response)
     return res.status(400).json({ error: `Cannot collect on loan with status ${loanPreview.status}` });
   }
 
-  const processed = await prisma.$transaction(async (tx) => {
-    const trnNumber = await getNextTrnNumber(tx);
-    return processLoanCollection(tx, {
+  const processed = await prisma.$transaction(async (tx) =>
+    processLoanCollection(tx, {
       loanId,
       amount: Number(amount),
       trnDate: new Date(trnDate),
-      trnNumber,
       staffId: resolvedStaffId,
       remarks,
       userBranchId: user?.branchId,
       isAdmin: isAdminUser(user),
-    });
-  });
+    })
+  );
 
   if (processed.skipped) {
     const msg = processed.skipReason || 'Collection skipped';

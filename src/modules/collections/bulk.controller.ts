@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import prisma from '../../utils/prisma';
-import { getNextTrnNumber, processLoanCollection } from '../../utils/collection.utils';
+import { processLoanCollection } from '../../utils/collection.utils';
 import { isAdminUser } from '../../utils/user.utils';
 import { assertMenuPermission, checkAreaScope, resolveStaffId } from '../../utils/validation.helpers';
 import { requireBranchAccess } from '../../utils/security.utils';
@@ -42,23 +42,17 @@ export const processBulkCollection = async (req: Request, res: Response): Promis
     const { processed, skipped } = await prisma.$transaction(async (tx) => {
       const processedCollections: any[] = [];
       const skippedEntries: { loanId: string; reason: string }[] = [];
-      let trnCounter = await getNextTrnNumber(tx);
-      let trnNum = parseInt(trnCounter.replace('TRN', ''), 10);
 
       for (const entry of collections) {
         const { loanId, amount, remarks } = entry;
         const entryAmount = Number(amount);
         if (entryAmount <= 0) continue;
 
-        const trnNumber = `TRN${trnNum.toString().padStart(6, '0')}`;
-        trnNum++;
-
         try {
           const result = await processLoanCollection(tx, {
             loanId,
             amount: entryAmount,
             trnDate: collectionDate,
-            trnNumber,
             staffId: resolvedStaffId,
             remarks,
             centerId: String(centerId),
@@ -68,15 +62,17 @@ export const processBulkCollection = async (req: Request, res: Response): Promis
 
           if (result.skipped) {
             skippedEntries.push({ loanId, reason: result.skipReason || 'Skipped' });
-            trnNum--;
             continue;
           }
 
           const collection = await tx.collection.findUnique({ where: { id: result.collection.id } });
           if (collection) processedCollections.push(collection);
         } catch (err: any) {
-          skippedEntries.push({ loanId, reason: err.message || 'Failed' });
-          trnNum--;
+          const reason =
+            err.code === 'P2002'
+              ? 'Transaction number conflict — please retry'
+              : err.message || 'Failed';
+          skippedEntries.push({ loanId, reason });
         }
       }
 

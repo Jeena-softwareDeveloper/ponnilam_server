@@ -70,7 +70,7 @@ export async function processLoanCollection(
     loanId: string;
     amount: number;
     trnDate: Date;
-    trnNumber: string;
+    trnNumber?: string;
     staffId?: string | null;
     remarks?: string | null;
     centerId?: string;
@@ -123,9 +123,18 @@ export async function processLoanCollection(
     throw new Error(`Customer is inactive — collection not allowed for loan ${loan.loanNumber}`);
   }
 
+  const scheduleOutstanding = await sumUnpaidScheduleAmount(tx, loan.id);
+  if (amount > scheduleOutstanding + 0.01) {
+    throw new Error(
+      `Amount ₹${amount} exceeds outstanding balance ₹${scheduleOutstanding.toFixed(2)}`
+    );
+  }
+
+  const resolvedTrnNumber = trnNumber ?? (await getNextTrnNumber(tx));
+
   const collection = await tx.collection.create({
     data: {
-      trnNumber,
+      trnNumber: resolvedTrnNumber,
       trnDate,
       amount,
       remarks: remarks || null,
@@ -135,12 +144,6 @@ export async function processLoanCollection(
   });
 
   const pool = amount + (loan.advanceBalance || 0);
-  const scheduleOutstanding = await sumUnpaidScheduleAmount(tx, loan.id);
-  if (amount > scheduleOutstanding + 0.01) {
-    throw new Error(
-      `Amount ₹${amount} exceeds outstanding balance ₹${scheduleOutstanding.toFixed(2)}`
-    );
-  }
 
   const leftover = await allocateCollection(tx, loan.id, loan.schedules, pool, trnDate, collection.id);
 

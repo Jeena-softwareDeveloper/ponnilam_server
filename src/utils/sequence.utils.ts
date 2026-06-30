@@ -42,6 +42,34 @@ export async function nextLoanNumber(tx: Tx, branchId?: string): Promise<string>
 }
 
 export async function nextTrnNumber(tx: Tx): Promise<string> {
-  const n = await nextSequenceValue(tx, 'TRN');
-  return `TRN${n.toString().padStart(6, '0')}`;
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const n = await nextSequenceValue(tx, 'TRN');
+    const trnNumber = `TRN${n.toString().padStart(6, '0')}`;
+    const exists = await tx.collection.findFirst({
+      where: { trnNumber },
+      select: { id: true },
+    });
+    if (!exists) return trnNumber;
+
+    // Sequence behind existing rows — bump to max in DB and retry
+    const maxTrn = await maxExistingTrnNumber(tx);
+    if (maxTrn >= n) {
+      await tx.sequence.upsert({
+        where: { id: 'TRN' },
+        create: { id: 'TRN', value: maxTrn },
+        update: { value: maxTrn },
+      });
+    }
+  }
+  throw new Error('Unable to allocate a unique transaction number');
+}
+
+async function maxExistingTrnNumber(tx: Tx): Promise<number> {
+  const rows = await tx.collection.findMany({ select: { trnNumber: true } });
+  let max = 0;
+  for (const row of rows) {
+    const n = parseInt(String(row.trnNumber).replace(/^TRN/i, ''), 10);
+    if (!isNaN(n) && n > max) max = n;
+  }
+  return max;
 }
