@@ -1,3 +1,4 @@
+import './load-env';
 import prisma from '../src/utils/prisma';
 
 async function main() {

@@ -8,6 +8,7 @@
  *   npx ts-node prisma/dedupe-collections-migration.ts
  *   npx ts-node prisma/dedupe-collections-migration.ts --dry-run
  */
+import './load-env';
 import { PrismaClient } from '@prisma/client';
 import { allocateCollection } from '../src/utils/collection.utils';
 import { sumUnpaidScheduleAmount } from '../src/utils/loan.utils';
@@ -200,6 +201,13 @@ async function replayLoanCollections(loanId: string): Promise<void> {
 }
 
 async function main() {
+  if (!process.env.DATABASE_URL) {
+    console.error(
+      'DATABASE_URL is not set. Ensure .env exists in the server root with DATABASE_URL=postgresql://...'
+    );
+    process.exit(1);
+  }
+
   console.log(dryRun ? '[dry-run] Analyzing collection duplicates...' : 'Fixing collection duplicates...');
 
   await ensureCollectionDayColumn();

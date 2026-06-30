@@ -2,6 +2,7 @@
  * Backfill nullable fields before applying stricter schema constraints.
  * Run: npx ts-node prisma/backfill-required-fields.ts
  */
+import './load-env';
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
