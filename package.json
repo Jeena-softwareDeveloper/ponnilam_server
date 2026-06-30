@@ -15,7 +15,9 @@
     "db:backfill": "ts-node prisma/backfill-required-fields.ts",
     "db:reset": "prisma db push --force-reset && ts-node prisma/seed.ts",
     "db:backfill-sequences": "ts-node prisma/backfill-sequences.ts",
-    "db:audit-migrate": "prisma db push && prisma generate && ts-node prisma/backfill-required-fields.ts && ts-node prisma/backfill-sequences.ts",
+    "db:dedupe-collections": "ts-node prisma/dedupe-collections-migration.ts",
+    "db:dedupe-collections:dry-run": "ts-node prisma/dedupe-collections-migration.ts --dry-run",
+    "db:audit-migrate": "ts-node prisma/dedupe-collections-migration.ts && prisma db push && prisma generate && ts-node prisma/backfill-required-fields.ts && ts-node prisma/backfill-sequences.ts",
     "postinstall": "prisma generate"
   },
   "prisma": {
