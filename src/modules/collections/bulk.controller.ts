@@ -80,8 +80,9 @@ export const processBulkCollection = async (req: Request, res: Response): Promis
     }, { timeout: 30000 });
 
     res.status(201).json({
-      message: `Successfully processed ${processed.length} collections.`,
+      message: `Processed ${processed.length} collection(s)${skipped.length ? `, ${skipped.length} skipped` : ''}.`,
       processed: processed.length,
+      skippedCount: skipped.length,
       collections: processed,
       skipped,
     });

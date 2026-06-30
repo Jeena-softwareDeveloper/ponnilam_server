@@ -451,6 +451,7 @@ model Collection {
   id        String   @id @default(uuid())
   trnNumber String   @unique
   trnDate   DateTime
+  collectionDay String @default("") // YYYY-MM-DD — one active collection per loan per day
   amount    Float
   remarks   String?
   isVoided  Boolean  @default(false)
@@ -471,10 +472,12 @@ model Collection {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([loanId, collectionDay, isVoided])
   @@index([loanId])
   @@index([trnDate])
   @@index([staffId])
   @@index([trnDate, loanId])
+  @@index([collectionDay])
 }
 
 // ==========================================

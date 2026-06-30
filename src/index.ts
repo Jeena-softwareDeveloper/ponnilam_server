@@ -24,6 +24,7 @@ import { requireAdmin } from './middlewares/admin.middleware';
 import { auditMiddleware } from './middlewares/audit.middleware';
 import { errorHandler } from './middlewares/error.middleware';
 import { decryptRequestBody, encryptResponseBody } from './middlewares/encryption.middleware';
+import { syncSequencesOnStartup } from './utils/startup.utils';
 
 dotenv.config();
 
@@ -110,4 +111,8 @@ app.use(errorHandler);
 
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT);
+syncSequencesOnStartup().finally(() => {
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+  });
+});

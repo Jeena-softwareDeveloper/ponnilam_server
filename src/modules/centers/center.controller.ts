@@ -4,22 +4,9 @@ import { LOAN_COLLECTIBLE_STATUSES, LoanStatus, OPEN_LOAN_STATUSES } from '../..
 import { countCenterMembers } from '../../utils/center-member.utils';
 import { sumUnpaidFromSchedules } from '../../utils/loan.utils';
 import { denyUnlessMenuPermission } from '../../utils/master-permissions';
+import { generateCenterCodeInTx } from '../../utils/center-code.utils';
 
 const MENU_PATH = '/admin/masters/centers';
-
-const generateCenterCode = async (name: string) => {
-  const prefix = name.trim().replace(/[^a-zA-Z]/g, '').substring(0, 3).toUpperCase();
-  const existing = await prisma.center.findMany({
-    where: { code: { startsWith: prefix } },
-    orderBy: { code: 'desc' },
-  });
-  let nextNo = 1;
-  if (existing.length > 0 && existing[0].code) {
-    const lastNum = parseInt(existing[0].code.replace(prefix, ''), 10);
-    if (!isNaN(lastNum)) nextNo = lastNum + 1;
-  }
-  return `${prefix}${nextNo.toString().padStart(3, '0')}`;
-};
 
 export const getCenters = async (req: Request, res: Response): Promise<any> => {
   try {
@@ -160,9 +147,6 @@ export const createCenter = async (req: Request, res: Response): Promise<any> =>
       }
     }
 
-    // Auto-generate center code from name (e.g. "Sattur" → SAT001)
-    const generatedCode = await generateCenterCode(name);
-
     if (employeeId) {
       const employee = await prisma.staff.findUnique({
         where: { id: employeeId },
@@ -176,18 +160,22 @@ export const createCenter = async (req: Request, res: Response): Promise<any> =>
       }
     }
 
-    const center = await prisma.center.create({
-      data: {
-        name,
-        code: generatedCode,
-        centerTime: centerTime || null,
-        repaymentType: repaymentType || 'WEEKLY',
-        disbursMode: disbursMode || 'CASH',
-        totalMembers: totalMembers ? parseInt(totalMembers) : 0,
-        areaId,
-        employeeId: employeeId || null,
-      },
-      include: { employee: true, area: true },
+    // Auto-generate center code from name (e.g. "Sattur" → SAT001)
+    const center = await prisma.$transaction(async (tx) => {
+      const generatedCode = await generateCenterCodeInTx(tx, name);
+      return tx.center.create({
+        data: {
+          name,
+          code: generatedCode,
+          centerTime: centerTime || null,
+          repaymentType: repaymentType || 'WEEKLY',
+          disbursMode: disbursMode || 'CASH',
+          totalMembers: totalMembers ? parseInt(totalMembers) : 0,
+          areaId,
+          employeeId: employeeId || null,
+        },
+        include: { employee: true, area: true },
+      });
     });
     return res.status(201).json(center);
   } catch (error: any) {
@@ -352,10 +340,10 @@ export const importCustomersToNewCenter = async (req: Request, res: Response): P
       return res.status(400).json({ error: 'Select at least one customer from the source center to import.' });
     }
 
-    const generatedCode = await generateCenterCode(newCenterName.trim());
-    const groupCodePrefix = generatedCode.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12) || 'CTR';
-
     const result = await prisma.$transaction(async (tx) => {
+      const generatedCode = await generateCenterCodeInTx(tx, newCenterName.trim());
+      const groupCodePrefix = generatedCode.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12) || 'CTR';
+
       const newCenter = await tx.center.create({
         data: {
           name: newCenterName.trim(),

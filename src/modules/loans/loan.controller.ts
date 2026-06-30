@@ -54,7 +54,8 @@ export const createLoan = asyncHandler(async (req: Request, res: Response) => {
   const existingOpen = await prisma.loan.findFirst({
     where: { customerId, status: { in: OPEN_LOAN_STATUSES } },
   });
-  if (existingOpen) {
+  // IMPORT members may receive a second loan while the first remains active for collection
+  if (existingOpen && customer.centerMemberType !== 'IMPORT') {
     return res.status(400).json({ error: `Customer already has an open loan (${existingOpen.loanNumber})` });
   }
 

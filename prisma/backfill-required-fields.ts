@@ -103,6 +103,19 @@ async function main() {
     // referenceId column may already be removed
   }
 
+  // Collection: collectionDay from trnDate
+  const collections = await prisma.collection.findMany({
+    select: { id: true, trnDate: true, collectionDay: true },
+  });
+  for (const col of collections) {
+    if (!col.collectionDay) {
+      const d = col.trnDate;
+      const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      await prisma.collection.update({ where: { id: col.id }, data: { collectionDay: day } });
+      console.log(`  Collection ${col.id}: set collectionDay ${day}`);
+    }
+  }
+
   console.log('Backfill complete.');
 }
 

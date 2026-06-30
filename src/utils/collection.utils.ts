@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { LOAN_COLLECTIBLE_STATUSES, sumUnpaidScheduleAmount } from './loan.utils';
 import { LoanStatus, ScheduleStatus, UNPAID_SCHEDULE_STATUSES } from './prisma-enums';
-import { getDayRange } from './date.utils';
+import { getDayRange, parseLocalDateInput, toCollectionDay } from './date.utils';
 import { nextTrnNumber } from './sequence.utils';
 
 type Tx = Prisma.TransactionClient;
@@ -84,10 +84,11 @@ export async function processLoanCollection(
     return { collection: { id: '', trnNumber: '' }, skipped: true, skipReason: 'Amount must be greater than zero' };
   }
 
-  const { dayStart, dayEnd } = getDayRange(trnDate);
+  const normalizedTrnDate = parseLocalDateInput(trnDate);
+  const collectionDay = toCollectionDay(normalizedTrnDate);
 
   const existing = await tx.collection.findFirst({
-    where: { loanId, trnDate: { gte: dayStart, lte: dayEnd }, isVoided: false },
+    where: { loanId, collectionDay, isVoided: false },
   });
   if (existing) {
     return { collection: { id: existing.id, trnNumber: existing.trnNumber }, skipped: true, skipReason: 'Duplicate collection for this loan on the same date' };
@@ -132,20 +133,38 @@ export async function processLoanCollection(
 
   const resolvedTrnNumber = trnNumber ?? (await getNextTrnNumber(tx));
 
-  const collection = await tx.collection.create({
-    data: {
-      trnNumber: resolvedTrnNumber,
-      trnDate,
-      amount,
-      remarks: remarks || null,
-      loanId: loan.id,
-      staffId: staffId || loan.staffId,
-    },
-  });
+  let collection;
+  try {
+    collection = await tx.collection.create({
+      data: {
+        trnNumber: resolvedTrnNumber,
+        trnDate: normalizedTrnDate,
+        collectionDay,
+        amount,
+        remarks: remarks || null,
+        loanId: loan.id,
+        staffId: staffId || loan.staffId,
+      },
+    });
+  } catch (err: any) {
+    if (err.code === 'P2002') {
+      const dup = await tx.collection.findFirst({
+        where: { loanId, collectionDay, isVoided: false },
+      });
+      if (dup) {
+        return {
+          collection: { id: dup.id, trnNumber: dup.trnNumber },
+          skipped: true,
+          skipReason: 'Duplicate collection for this loan on the same date',
+        };
+      }
+    }
+    throw err;
+  }
 
   const pool = amount + (loan.advanceBalance || 0);
 
-  const leftover = await allocateCollection(tx, loan.id, loan.schedules, pool, trnDate, collection.id);
+  const leftover = await allocateCollection(tx, loan.id, loan.schedules, pool, normalizedTrnDate, collection.id);
 
   const newScheduleOutstanding = await sumUnpaidScheduleAmount(tx, loan.id);
   let newOutstanding = newScheduleOutstanding;
@@ -165,7 +184,7 @@ export async function processLoanCollection(
       outstandingAmount: newOutstanding,
       advanceBalance: newAdvanceBalance,
       status: newStatus,
-      ...(loan.status === LoanStatus.APPROVED && !loan.disbursementDate && { disbursementDate: trnDate }),
+      ...(loan.status === LoanStatus.APPROVED && !loan.disbursementDate && { disbursementDate: normalizedTrnDate }),
     },
   });
 
@@ -185,7 +204,7 @@ export async function processLoanCollection(
       remarks: remarks || null,
       customerId: loan.customerId,
       collectionId: collection.id,
-      date: trnDate,
+      date: normalizedTrnDate,
     },
   });
 
@@ -205,7 +224,7 @@ export async function processLoanCollection(
       remarks: remarks || null,
       loanId: loan.id,
       collectionId: collection.id,
-      date: trnDate,
+      date: normalizedTrnDate,
     },
   });
 
