@@ -158,6 +158,17 @@ export const updateLoanStatus = asyncHandler(async (req: Request, res: Response)
     return res.status(400).json({ error: `Cannot change loan status from ${existingLoan.status} to ${status}` });
   }
 
+  const resolvedSanction = sanctionDate ? String(sanctionDate).slice(0, 10) : null;
+  const resolvedDisbursement = disbursementDate
+    ? String(disbursementDate).slice(0, 10)
+    : status === LoanStatus.APPROVED && resolvedSanction
+      ? resolvedSanction
+      : null;
+
+  if (resolvedSanction && resolvedDisbursement && resolvedDisbursement > resolvedSanction) {
+    return res.status(400).json({ error: 'Disbursement date cannot be after loan start date' });
+  }
+
   if (existingLoan.status !== status) {
     const editPerm = await assertMenuPermission(user, '/admin/loans', 'canEdit');
     if (editPerm) return res.status(403).json({ error: editPerm });
