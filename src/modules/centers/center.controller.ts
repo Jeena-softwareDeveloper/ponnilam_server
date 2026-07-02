@@ -3,6 +3,17 @@ import prisma from '../../utils/prisma';
 import { LOAN_COLLECTIBLE_STATUSES, LoanStatus, OPEN_LOAN_STATUSES } from '../../utils/prisma-enums';
 import { countCenterMembers } from '../../utils/center-member.utils';
 import { nextInstallmentDemand } from '../../utils/loan.utils';
+
+function sortCustomersByRegistration<
+  T extends { createdAt?: Date | string | null; customerNo?: string | null },
+>(customers: T[]): T[] {
+  return [...customers].sort((a, b) => {
+    const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    if (aTime !== bTime) return aTime - bTime;
+    return (a.customerNo || '').localeCompare(b.customerNo || '', undefined, { numeric: true });
+  });
+}
 import { denyUnlessMenuPermission } from '../../utils/master-permissions';
 import { generateCenterCodeInTx } from '../../utils/center-code.utils';
 
@@ -519,14 +530,15 @@ export const getCenterJointLiabilitySheet = async (req: Request, res: Response):
         id: g.id,
         groupName: g.groupName,
         shortLabel: g.groupCode || `G${parseGroupIndex(g.groupName) || idx + 1}`,
-        customers: members
-          .filter((c) => c.groupId === g.id)
-          .map((c) => ({
+        customers: sortCustomersByRegistration(members.filter((c) => c.groupId === g.id)).map(
+          (c, i) => ({
             id: c.id,
             name: c.name,
             customerNo: c.customerNo,
             coApplicantName: c.coApplicant?.name || '',
-          })),
+            isGroupLeader: i === 0,
+          })
+        ),
       }))
       .filter((g) => g.customers.length > 0);
 
