@@ -41,12 +41,30 @@ async function allocateUniqueFormatted(
   throw new Error(`Unable to allocate unique number for ${sequenceKey}`);
 }
 
-function branchPrefix(branchId: string | undefined, tx: Tx): Promise<string> {
-  if (!branchId) return Promise.resolve('CUS');
-  return tx.branch.findUnique({ where: { id: branchId } }).then((branch) => {
-    if (!branch?.name) return 'CUS';
-    return branch.name.trim().replace(/[^a-zA-Z]/g, '').substring(0, 3).toUpperCase();
-  });
+export function nameCodePrefix(name: string, fallback = 'CUS'): string {
+  return name.trim().replace(/[^a-zA-Z]/g, '').substring(0, 3).toUpperCase() || fallback;
+}
+
+async function customerNoPrefix(
+  tx: Tx,
+  centerId?: string,
+  branchIdFallback?: string
+): Promise<string> {
+  if (centerId) {
+    const center = await tx.center.findUnique({ where: { id: centerId }, select: { name: true } });
+    if (center?.name) return nameCodePrefix(center.name);
+  }
+  if (branchIdFallback) {
+    const branch = await tx.branch.findUnique({ where: { id: branchIdFallback }, select: { name: true } });
+    if (branch?.name) return nameCodePrefix(branch.name);
+  }
+  return 'CUS';
+}
+
+async function branchPrefix(branchId: string | undefined, tx: Tx): Promise<string> {
+  if (!branchId) return 'CUS';
+  const branch = await tx.branch.findUnique({ where: { id: branchId } });
+  return nameCodePrefix(branch?.name || '', 'CUS');
 }
 
 async function loanPrefix(branchId: string | undefined, tx: Tx): Promise<string> {
@@ -72,8 +90,12 @@ async function maxNumericSuffix(
   return max;
 }
 
-export async function nextCustomerNo(tx: Tx, branchId?: string): Promise<string> {
-  const prefix = await branchPrefix(branchId, tx);
+export async function nextCustomerNo(
+  tx: Tx,
+  centerId?: string,
+  branchIdFallback?: string
+): Promise<string> {
+  const prefix = await customerNoPrefix(tx, centerId, branchIdFallback);
   const key = `CUS:${prefix}`;
   return allocateUniqueFormatted(
     tx,

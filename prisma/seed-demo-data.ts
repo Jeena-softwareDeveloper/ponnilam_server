@@ -350,7 +350,7 @@ async function ensureCustomerWithLoan(
 
   if (!customer) {
     customer = await prisma.$transaction(async (tx) => {
-      const customerNo = await nextCustomerNo(tx, opts.branchId);
+      const customerNo = await nextCustomerNo(tx, opts.centerId, opts.branchId);
       return tx.customer.create({
         data: {
           customerNo,

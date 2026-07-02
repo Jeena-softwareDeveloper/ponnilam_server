@@ -70,7 +70,7 @@ async function main() {
     await prisma.$transaction(async (tx) => {
       for (let i = 0; i < batchSize; i++) {
         const n = existing + created + i + 1;
-        const customerNo = await nextCustomerNo(tx, branchId);
+        const customerNo = await nextCustomerNo(tx, center.id, branchId);
         const mobile = String(9100000000 + n);
 
         const customer = await tx.customer.create({

@@ -98,7 +98,7 @@ export const createCustomer = asyncHandler(async (req: Request, res: Response) =
     const branchIdForNo = area.branchId || user?.branchId || undefined;
 
     const customer = await prisma.$transaction(async (tx) => {
-      const customerNo = await nextCustomerNo(tx, branchIdForNo);
+      const customerNo = await nextCustomerNo(tx, general.centerId, branchIdForNo);
       return tx.customer.create({
       data: {
         customerNo,
