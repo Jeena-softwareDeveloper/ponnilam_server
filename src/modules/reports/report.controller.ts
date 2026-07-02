@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import prisma from '../../utils/prisma';
 import { LOAN_COLLECTIBLE_STATUSES, UNPAID_SCHEDULE_STATUSES } from '../../utils/prisma-enums';
-import { sumUnpaidFromSchedules } from '../../utils/loan.utils';
+import { nextInstallmentDemand } from '../../utils/loan.utils';
 import { getDateRangeBounds, getDayRange } from '../../utils/date.utils';
 import { assertMenuPermission } from '../../utils/validation.helpers';
 
@@ -122,7 +122,11 @@ export const getCenterDetailReport = async (req: Request, res: Response) => {
                 outstandingAmount: true,
                 perDueAmount: true,
                 status: true,
-                schedules: { where: { status: { in: UNPAID_SCHEDULE_STATUSES } } },
+                schedules: {
+                  where: { status: { in: UNPAID_SCHEDULE_STATUSES } },
+                  orderBy: { dueDate: 'asc' },
+                  select: { emiAmount: true, amountPaid: true, status: true, dueDate: true },
+                },
               }
             }
           }
@@ -135,9 +139,7 @@ export const getCenterDetailReport = async (req: Request, res: Response) => {
       const activeLoans = center.customers.flatMap(c => c.loans);
       const totalOutstanding = activeLoans.reduce((sum, l) => sum + l.outstandingAmount, 0);
       const expectedCollection = activeLoans.reduce((sum, l) => {
-        const scheduleDue = sumUnpaidFromSchedules(l.schedules || []);
-        const due = scheduleDue > 0 ? scheduleDue : Math.min(l.outstandingAmount, l.perDueAmount);
-        return sum + due;
+        return sum + nextInstallmentDemand(l.schedules || [], l.perDueAmount, l.outstandingAmount);
       }, 0);
       return {
         ...center,

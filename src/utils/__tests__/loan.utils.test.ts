@@ -4,6 +4,7 @@ import {
   computeFlatEmi,
   buildScheduleRows,
   sumUnpaidFromSchedules,
+  nextInstallmentDemand,
   allocateCollectionPool,
   resolveLastEmiAmount,
   incrementDueDate,
@@ -36,6 +37,30 @@ describe('buildScheduleRows', () => {
     assert.equal(rows.length, 7);
     assert.equal(sum, totalDueAmount);
     assert.equal(rows[6].emiAmount, lastEmiAmount);
+  });
+});
+
+describe('nextInstallmentDemand', () => {
+  it('returns one EMI when many pending schedules exist', () => {
+    const schedules = Array.from({ length: 28 }, (_, i) => ({
+      emiAmount: 650,
+      amountPaid: 0,
+      status: ScheduleStatus.PENDING,
+      dueDate: new Date(`2026-07-${String(9 + i * 7).padStart(2, '0')}`),
+    }));
+    assert.equal(nextInstallmentDemand(schedules, 650, 18200), 650);
+  });
+
+  it('returns partial balance on next due schedule', () => {
+    const schedules = [
+      { emiAmount: 650, amountPaid: 200, status: ScheduleStatus.PARTIAL, dueDate: new Date('2026-07-09') },
+      { emiAmount: 650, amountPaid: 0, status: ScheduleStatus.PENDING, dueDate: new Date('2026-07-16') },
+    ];
+    assert.equal(nextInstallmentDemand(schedules, 650, 1100), 450);
+  });
+
+  it('falls back to perDueAmount when no schedules', () => {
+    assert.equal(nextInstallmentDemand([], 650, 5000), 650);
   });
 });
 

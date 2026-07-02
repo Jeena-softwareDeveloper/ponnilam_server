@@ -60,10 +60,38 @@ export type ScheduleAmountRow = {
   status: string;
 };
 
+export type ScheduleDemandRow = ScheduleAmountRow & { dueDate?: Date | string | null };
+
 export function sumUnpaidFromSchedules(schedules: ScheduleAmountRow[]): number {
   return schedules
     .filter((s) => UNPAID_SCHEDULE_STATUSES.includes(s.status as ScheduleStatus))
     .reduce((sum, s) => sum + (s.emiAmount - (s.amountPaid || 0)), 0);
+}
+
+/** Weekly / single-period collection demand — next EMI only, not all pending schedules. */
+export function nextInstallmentDemand(
+  schedules: ScheduleDemandRow[],
+  perDueAmount: number,
+  outstandingAmount: number
+): number {
+  if (outstandingAmount <= 0) return 0;
+
+  const unpaid = schedules
+    .filter((s) => UNPAID_SCHEDULE_STATUSES.includes(s.status as ScheduleStatus))
+    .sort((a, b) => {
+      const ad = a.dueDate ? new Date(a.dueDate).getTime() : Number.MAX_SAFE_INTEGER;
+      const bd = b.dueDate ? new Date(b.dueDate).getTime() : Number.MAX_SAFE_INTEGER;
+      return ad - bd;
+    });
+
+  if (unpaid.length > 0) {
+    const next = unpaid[0];
+    const remaining = next.emiAmount - (next.amountPaid || 0);
+    return remaining > 0 ? remaining : 0;
+  }
+
+  const fallback = perDueAmount || outstandingAmount;
+  return Math.min(outstandingAmount, fallback);
 }
 
 export type ScheduleAllocRow = ScheduleAmountRow & { id: string };

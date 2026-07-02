@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import prisma from '../../utils/prisma';
 import { LOAN_COLLECTIBLE_STATUSES, LoanStatus, OPEN_LOAN_STATUSES } from '../../utils/prisma-enums';
 import { countCenterMembers } from '../../utils/center-member.utils';
-import { sumUnpaidFromSchedules } from '../../utils/loan.utils';
+import { nextInstallmentDemand } from '../../utils/loan.utils';
 import { denyUnlessMenuPermission } from '../../utils/master-permissions';
 import { generateCenterCodeInTx } from '../../utils/center-code.utils';
 
@@ -431,11 +431,11 @@ export const getCenterCollectionSheet = async (req: Request, res: Response): Pro
 
     const rows = center.customers.flatMap((customer) =>
       customer.loans.map((loan) => {
-        const scheduleDue = sumUnpaidFromSchedules(loan.schedules || []);
-        const demand =
-          scheduleDue > 0
-            ? scheduleDue
-            : Math.min(loan.outstandingAmount, loan.perDueAmount || loan.outstandingAmount);
+        const demand = nextInstallmentDemand(
+          loan.schedules || [],
+          loan.perDueAmount,
+          loan.outstandingAmount
+        );
         return {
           customerId: customer.id,
           customerNo: customer.customerNo,
