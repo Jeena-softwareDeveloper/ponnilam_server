@@ -522,6 +522,8 @@ export const getCenterJointLiabilitySheet = async (req: Request, res: Response):
       (a, b) => parseGroupIndex(a.groupName) - parseGroupIndex(b.groupName)
     );
 
+    const centerLeaderId = sortCustomersByRegistration(members)[0]?.id ?? null;
+
     const groupsPayload = (groupId
       ? sortedGroups.filter((g) => g.id === String(groupId))
       : sortedGroups
@@ -531,12 +533,12 @@ export const getCenterJointLiabilitySheet = async (req: Request, res: Response):
         groupName: g.groupName,
         shortLabel: g.groupCode || `G${parseGroupIndex(g.groupName) || idx + 1}`,
         customers: sortCustomersByRegistration(members.filter((c) => c.groupId === g.id)).map(
-          (c, i) => ({
+          (c) => ({
             id: c.id,
             name: c.name,
             customerNo: c.customerNo,
             coApplicantName: c.coApplicant?.name || '',
-            isGroupLeader: i === 0,
+            isGroupLeader: c.id === centerLeaderId,
           })
         ),
       }))
