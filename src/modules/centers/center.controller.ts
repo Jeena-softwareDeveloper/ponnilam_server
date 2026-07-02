@@ -137,12 +137,18 @@ export const createCenter = async (req: Request, res: Response): Promise<any> =>
 
     const { name, centerTime, repaymentType, disbursMode, areaId, employeeId, totalMembers } = req.body;
     if (!name || !areaId) return res.status(400).json({ error: 'Name and Area are required' });
+
+    const area = await prisma.area.findUnique({
+      where: { id: areaId },
+      include: { branch: true },
+    });
+    if (!area) return res.status(400).json({ error: 'Invalid area' });
+    if (!area.branch) return res.status(400).json({ error: 'Area branch not found' });
     
     // Security check
     const user = (req as any).user;
     if (user?.role?.name !== 'Admin' && user?.branchId) {
-      const area = await prisma.area.findUnique({ where: { id: areaId } });
-      if (!area || area.branchId !== user.branchId) {
+      if (area.branchId !== user.branchId) {
         return res.status(403).json({ error: 'Security Violation: Cannot create a center in an area outside your branch.' });
       }
     }
@@ -152,17 +158,16 @@ export const createCenter = async (req: Request, res: Response): Promise<any> =>
         where: { id: employeeId },
         include: { area: true },
       });
-      const area = await prisma.area.findUnique({ where: { id: areaId } });
       if (!employee) return res.status(400).json({ error: 'Invalid employee' });
       const empBranch = employee.branchId || employee.area?.branchId;
-      if (area && empBranch && empBranch !== area.branchId) {
+      if (empBranch && empBranch !== area.branchId) {
         return res.status(400).json({ error: 'Employee does not belong to this center branch' });
       }
     }
 
-    // Auto-generate center code from name (e.g. "Sattur" → SAT001)
+    // Auto-generate center code from branch name (e.g. branch "Erode" → ERO001)
     const center = await prisma.$transaction(async (tx) => {
-      const generatedCode = await generateCenterCodeInTx(tx, name);
+      const generatedCode = await generateCenterCodeInTx(tx, area.branch.name, area.branchId);
       return tx.center.create({
         data: {
           name,
@@ -310,7 +315,7 @@ export const importCustomersToNewCenter = async (req: Request, res: Response): P
     const sourceCenter = await prisma.center.findUnique({
       where: { id: sourceCenterId },
       include: {
-        area: true,
+        area: { include: { branch: true } },
         customers: {
           where: { centerMemberType: { not: 'IMPORT' } },
           include: { loans: { select: { status: true } } },
@@ -340,8 +345,14 @@ export const importCustomersToNewCenter = async (req: Request, res: Response): P
       return res.status(400).json({ error: 'Select at least one customer from the source center to import.' });
     }
 
+    const branchName = sourceCenter.area?.branch?.name || 'Branch';
+    const branchId = sourceCenter.area?.branchId || sourceCenter.area?.branch?.id;
+    if (!branchId) {
+      return res.status(400).json({ error: 'Source center branch not found' });
+    }
+
     const result = await prisma.$transaction(async (tx) => {
-      const generatedCode = await generateCenterCodeInTx(tx, newCenterName.trim());
+      const generatedCode = await generateCenterCodeInTx(tx, branchName, branchId);
       const groupCodePrefix = generatedCode.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12) || 'CTR';
 
       const newCenter = await tx.center.create({

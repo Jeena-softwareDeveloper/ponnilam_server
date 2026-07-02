@@ -2,13 +2,25 @@ import { Prisma } from '@prisma/client';
 
 type Tx = Prisma.TransactionClient;
 
-/** Allocate next center code inside a transaction (race-safe). */
-export async function generateCenterCodeInTx(tx: Tx, name: string): Promise<string> {
-  const prefix = name.trim().replace(/[^a-zA-Z]/g, '').substring(0, 3).toUpperCase() || 'CTR';
+/** First 3 letters of branch name — e.g. "Erode" → "ERO", "Anthiyur" → "ANT". */
+export function branchCodePrefix(branchName: string): string {
+  return branchName.trim().replace(/[^a-zA-Z]/g, '').substring(0, 3).toUpperCase() || 'CTR';
+}
+
+/** Allocate next center code inside a transaction (race-safe), scoped per branch. */
+export async function generateCenterCodeInTx(
+  tx: Tx,
+  branchName: string,
+  branchId: string
+): Promise<string> {
+  const prefix = branchCodePrefix(branchName);
 
   for (let attempt = 0; attempt < 10; attempt++) {
     const existing = await tx.center.findMany({
-      where: { code: { startsWith: prefix } },
+      where: {
+        code: { startsWith: prefix },
+        area: { branchId },
+      },
       orderBy: { code: 'desc' },
       take: 1,
     });
