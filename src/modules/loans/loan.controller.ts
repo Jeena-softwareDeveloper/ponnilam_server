@@ -322,7 +322,21 @@ export const getLoanById = asyncHandler(async (req: Request, res: Response) => {
   const loan = await prisma.loan.findUnique({
     where: { id: String(id) },
     include: {
-      customer: { include: { center: true, area: { include: { branch: true } }, kyc: true, bank: true, coApplicant: true } },
+      customer: {
+        include: {
+          center: {
+            include: {
+              employee: { select: { id: true, name: true, phone: true } },
+              area: { include: { branch: true } },
+            },
+          },
+          area: { include: { branch: true } },
+          employee: { select: { id: true, name: true } },
+          kyc: true,
+          bank: true,
+          coApplicant: true,
+        },
+      },
       staff: true,
       package: true,
       guarantors: true,
