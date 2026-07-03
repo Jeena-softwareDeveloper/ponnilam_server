@@ -68,7 +68,7 @@ export const getCollectionReport = async (req: Request, res: Response) => {
       where,
       include: {
         loan: { include: { customer: { include: { area: { include: { branch: true } }, center: true } } } },
-        staff: { select: { name: true } }
+        staff: { select: { name: true, username: true, phone: true, staffNo: true } }
       },
       orderBy: { trnDate: 'desc' }
     });
@@ -166,7 +166,7 @@ export const getCenterDetailReport = async (req: Request, res: Response) => {
       where,
       include: {
         area: { include: { branch: true } },
-        employee: { select: { id: true, name: true, phone: true, username: true } },
+        employee: { select: { id: true, name: true, phone: true, username: true, staffNo: true } },
         customers: {
           include: {
             loans: {
@@ -246,7 +246,7 @@ export const getCenterCustomerReport = async (req: Request, res: Response) => {
             name: true,
             code: true,
             totalMembers: true,
-            employee: { select: { id: true, name: true, phone: true, username: true } },
+            employee: { select: { id: true, name: true, phone: true, username: true, staffNo: true } },
           },
         },
         area: { include: { branch: true } },
@@ -300,7 +300,7 @@ export const getEmployeeWiseReport = async (req: Request, res: Response) => {
     const collections = await prisma.collection.findMany({
       where,
       include: {
-        staff: { select: { id: true, name: true, phone: true } },
+        staff: { select: { id: true, name: true, phone: true, username: true, staffNo: true } },
         loan: { include: { customer: { include: { center: true } } } }
       }
     });
@@ -314,6 +314,8 @@ export const getEmployeeWiseReport = async (req: Request, res: Response) => {
         staffMap.set(staffId, {
           staffId, staffName,
           phone: c.staff?.phone || '-',
+          username: c.staff?.username || null,
+          staffNo: c.staff?.staffNo || null,
           totalAmount: 0, totalTransactions: 0, customers: new Set()
         });
       }

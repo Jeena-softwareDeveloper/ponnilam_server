@@ -417,7 +417,7 @@ export const getCenterCollectionSheet = async (req: Request, res: Response): Pro
       where: { id: centerId },
       include: {
         area: { include: { branch: true } },
-        employee: { select: { id: true, name: true, phone: true, username: true } },
+        employee: { select: { id: true, name: true, phone: true, username: true, staffNo: true } },
         customers: {
           include: {
             loans: {
@@ -462,7 +462,7 @@ export const getCenterCollectionSheet = async (req: Request, res: Response): Pro
           status: loan.status,
         };
       })
-    );
+    ).filter((row) => !collectionDate || row.demand > 0);
 
     return res.status(200).json({
       center,

@@ -5,6 +5,7 @@ import { assignBranchManagerMenus } from '../../utils/branch-menus.utils';
 import { generateTemporaryPassword } from '../../utils/auth.utils';
 import { assertMenuPermission } from '../../utils/validation.helpers';
 import { denyUnlessMenuPermission } from '../../utils/master-permissions';
+import { nextStaffNo } from '../../utils/sequence.utils';
 
 const MENU_PATH = '/admin/masters/branches';
 
@@ -73,14 +74,12 @@ export const createBranch = async (req: Request, res: Response): Promise<any> =>
       }
     }
 
-    // Handle creation in a transaction if admin is provided
     if (adminName && adminPhone) {
       const branch = await prisma.$transaction(async (tx) => {
         const newBranch = await tx.branch.create({
           data: { name, code, stateId: stateId || null, districtId: districtId || null, location: location || null, phone: phone || null },
         });
 
-        // Use provided roleId or find 'Branch Manager'
         let roleId = adminRoleId;
         if (!roleId) {
           let role = await tx.role.findFirst({ where: { name: 'Branch Manager' } });
@@ -95,6 +94,7 @@ export const createBranch = async (req: Request, res: Response): Promise<any> =>
 
         const newStaff = await tx.staff.create({
           data: {
+            staffNo: await nextStaffNo(tx, newBranch.id),
             name: adminName,
             username: adminUsername || null,
             phone: adminPhone,
@@ -199,7 +199,12 @@ export const updateBranch = async (req: Request, res: Response): Promise<any> =>
             dataToUpdate.mustChangePassword = true;
           }
           dataToUpdate.branchId = id;
-          const newStaff = await tx.staff.create({ data: dataToUpdate });
+          const newStaff = await tx.staff.create({
+            data: {
+              ...dataToUpdate,
+              staffNo: await nextStaffNo(tx, id),
+            },
+          });
           await assignBranchManagerMenus(tx, id, newStaff.id);
         }
       }

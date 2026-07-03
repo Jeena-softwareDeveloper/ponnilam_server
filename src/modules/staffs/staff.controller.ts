@@ -15,6 +15,7 @@ import {
   listPendingPasswordResetRequests,
 } from '../../utils/password-reset.utils';
 import { denyUnlessMenuPermission } from '../../utils/master-permissions';
+import { nextStaffNo } from '../../utils/sequence.utils';
 
 const STAFF_MENU_PATH = '/admin/masters/staffs';
 
@@ -185,19 +186,23 @@ export const createStaff = async (req: Request, res: Response): Promise<any> => 
       mustChangePassword = true;
     }
 
-    const staff = await prisma.staff.create({
-      data: {
-        name,
-        username: normalizedUsername,
-        phone: normalizedPhone,
-        email: normalizedEmail,
-        areaId: areaId || null,
-        branchId: branchId || null,
-        roleId,
-        password: hashedPassword,
-        mustChangePassword,
-      },
-      include: { area: true, role: true, branch: true },
+    const staff = await prisma.$transaction(async (tx) => {
+      const staffNo = await nextStaffNo(tx, branchId || undefined);
+      return tx.staff.create({
+        data: {
+          staffNo,
+          name,
+          username: normalizedUsername,
+          phone: normalizedPhone,
+          email: normalizedEmail,
+          areaId: areaId || null,
+          branchId: branchId || null,
+          roleId,
+          password: hashedPassword,
+          mustChangePassword,
+        },
+        include: { area: true, role: true, branch: true },
+      });
     });
 
     return res.status(201).json({

@@ -192,6 +192,57 @@ export async function nextLoanNumber(tx: Tx, branchId?: string): Promise<string>
   throw new Error(`Unable to allocate unique loan number for ${prefix}`);
 }
 
+function staffNoPattern(prefix: string): RegExp {
+  const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`^${escaped}(\\d{3})$`);
+}
+
+async function staffNoPrefix(branchId: string | undefined, tx: Tx): Promise<string> {
+  if (!branchId) return 'EMPS';
+  const branch = await tx.branch.findUnique({ where: { id: branchId }, select: { name: true } });
+  return `${nameCodePrefix(branch?.name || '', 'EMP')}S`;
+}
+
+export async function lowestAvailableStaffSuffix(tx: Tx, prefix: string): Promise<number> {
+  const rows = await tx.staff.findMany({
+    where: { staffNo: { startsWith: prefix } },
+    select: { staffNo: true },
+  });
+  const pattern = staffNoPattern(prefix);
+  const used: number[] = [];
+  for (const row of rows) {
+    const m = String(row.staffNo || '').match(pattern);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (!isNaN(n)) used.push(n);
+    }
+  }
+  return lowestAvailableSuffix(used);
+}
+
+export async function nextStaffNo(tx: Tx, branchId?: string): Promise<string> {
+  const prefix = await staffNoPrefix(branchId, tx);
+  const key = `STAFF:${prefix}`;
+  const format = (n: number) => `${prefix}${n.toString().padStart(3, '0')}`;
+
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const n = await lowestAvailableStaffSuffix(tx, prefix);
+    const staffNo = format(n);
+    const taken = await tx.staff.findFirst({ where: { staffNo }, select: { id: true } });
+    if (!taken) {
+      const existingSeq = await tx.sequence.findUnique({ where: { id: key } });
+      const seqValue = Math.max(existingSeq?.value ?? 0, n);
+      await tx.sequence.upsert({
+        where: { id: key },
+        create: { id: key, value: seqValue },
+        update: { value: seqValue },
+      });
+      return staffNo;
+    }
+  }
+  throw new Error(`Unable to allocate unique staff number for ${prefix}`);
+}
+
 export async function nextTrnNumber(tx: Tx): Promise<string> {
   return allocateUniqueFormatted(
     tx,

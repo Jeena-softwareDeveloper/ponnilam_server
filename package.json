@@ -19,6 +19,8 @@
     "db:renumber-customers:dry-run": "ts-node prisma/renumber-customer-nos.ts --dry-run",
     "db:renumber-loans": "ts-node prisma/renumber-loan-nos.ts",
     "db:renumber-loans:dry-run": "ts-node prisma/renumber-loan-nos.ts --dry-run",
+    "db:assign-staff-nos": "ts-node prisma/assign-staff-nos.ts",
+    "db:assign-staff-nos:dry-run": "ts-node prisma/assign-staff-nos.ts --dry-run",
     "db:dedupe-collections": "ts-node prisma/dedupe-collections-migration.ts",
     "db:dedupe-collections:dry-run": "ts-node prisma/dedupe-collections-migration.ts --dry-run",
     "db:audit-migrate": "ts-node prisma/dedupe-collections-migration.ts && prisma db push && prisma generate && ts-node prisma/backfill-required-fields.ts && ts-node prisma/backfill-sequences.ts",

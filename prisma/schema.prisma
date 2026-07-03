@@ -171,6 +171,7 @@ model Menu {
 
 model Staff {
   id       String  @id @default(uuid())
+  staffNo  String? @unique
   name     String
   username String? @unique
   email    String? @unique
