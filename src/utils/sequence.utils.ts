@@ -90,6 +90,36 @@ async function maxNumericSuffix(
   return max;
 }
 
+/** Smallest positive integer not in used (fills gaps from deleted customers). */
+export function lowestAvailableSuffix(used: Iterable<number>): number {
+  const set = new Set(used);
+  let n = 1;
+  while (set.has(n)) n++;
+  return n;
+}
+
+function customerNoPattern(prefix: string): RegExp {
+  const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`^${escaped}(\\d+)$`);
+}
+
+export async function lowestAvailableCustomerSuffix(tx: Tx, prefix: string): Promise<number> {
+  const rows = await tx.customer.findMany({
+    where: { customerNo: { startsWith: prefix } },
+    select: { customerNo: true },
+  });
+  const pattern = customerNoPattern(prefix);
+  const used: number[] = [];
+  for (const row of rows) {
+    const m = String(row.customerNo || '').match(pattern);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (!isNaN(n)) used.push(n);
+    }
+  }
+  return lowestAvailableSuffix(used);
+}
+
 export async function nextCustomerNo(
   tx: Tx,
   centerId?: string,
@@ -97,19 +127,24 @@ export async function nextCustomerNo(
 ): Promise<string> {
   const prefix = await customerNoPrefix(tx, centerId, branchIdFallback);
   const key = `CUS:${prefix}`;
-  return allocateUniqueFormatted(
-    tx,
-    key,
-    (n) => `${prefix}${n.toString().padStart(3, '0')}`,
-    (customerNo) => tx.customer.findFirst({ where: { customerNo }, select: { id: true } }).then(Boolean),
-    async (innerTx) => {
-      const rows = await innerTx.customer.findMany({
-        where: { customerNo: { startsWith: prefix } },
-        select: { customerNo: true },
+  const format = (n: number) => `${prefix}${n.toString().padStart(3, '0')}`;
+
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const n = await lowestAvailableCustomerSuffix(tx, prefix);
+    const customerNo = format(n);
+    const taken = await tx.customer.findFirst({ where: { customerNo }, select: { id: true } });
+    if (!taken) {
+      const existingSeq = await tx.sequence.findUnique({ where: { id: key } });
+      const seqValue = Math.max(existingSeq?.value ?? 0, n);
+      await tx.sequence.upsert({
+        where: { id: key },
+        create: { id: key, value: seqValue },
+        update: { value: seqValue },
       });
-      return maxNumericSuffix(innerTx, rows.map((r) => ({ value: r.customerNo })), new RegExp(`^${prefix}(\\d+)$`));
+      return customerNo;
     }
-  );
+  }
+  throw new Error(`Unable to allocate unique customer number for ${prefix}`);
 }
 
 export async function nextLoanNumber(tx: Tx, branchId?: string): Promise<string> {

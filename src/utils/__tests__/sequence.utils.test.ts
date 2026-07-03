@@ -1,18 +1,21 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { nameCodePrefix } from '../sequence.utils';
+import { lowestAvailableSuffix } from '../sequence.utils';
 
-describe('nameCodePrefix (customer no)', () => {
-  it('uses first 3 letters of center name', () => {
-    assert.equal(nameCodePrefix('nagammal samathuvapuram'), 'NAG');
-    assert.equal(nameCodePrefix('priya center test 1'), 'PRI');
+describe('lowestAvailableSuffix', () => {
+  it('returns 1 when no numbers are used', () => {
+    assert.equal(lowestAvailableSuffix([]), 1);
   });
 
-  it('strips non-letters and uppercases', () => {
-    assert.equal(nameCodePrefix('  erode '), 'ERO');
+  it('fills gap when 2 is missing (1,3,4)', () => {
+    assert.equal(lowestAvailableSuffix([1, 3, 4]), 2);
   });
 
-  it('falls back when name has no letters', () => {
-    assert.equal(nameCodePrefix('123'), 'CUS');
+  it('returns next after continuous block 1..5', () => {
+    assert.equal(lowestAvailableSuffix([1, 2, 3, 4, 5]), 6);
+  });
+
+  it('returns 1 when only higher numbers exist (2..6)', () => {
+    assert.equal(lowestAvailableSuffix([2, 3, 4, 5, 6]), 1);
   });
 });
