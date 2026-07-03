@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import prisma from '../../utils/prisma';
 import { LOAN_COLLECTIBLE_STATUSES, LoanStatus, OPEN_LOAN_STATUSES } from '../../utils/prisma-enums';
 import { countCenterMembers } from '../../utils/center-member.utils';
-import { nextInstallmentDemand } from '../../utils/loan.utils';
+import { loanDemandForCollectionDate } from '../../utils/loan.utils';
 
 function sortCustomersByRegistration<
   T extends { createdAt?: Date | string | null; customerNo?: string | null },
@@ -412,6 +412,7 @@ export const importCustomersToNewCenter = async (req: Request, res: Response): P
 export const getCenterCollectionSheet = async (req: Request, res: Response): Promise<any> => {
   try {
     const centerId = String(req.params.id);
+    const collectionDate = typeof req.query.collectionDate === 'string' ? req.query.collectionDate : undefined;
     const center = await prisma.center.findUnique({
       where: { id: centerId },
       include: {
@@ -442,8 +443,9 @@ export const getCenterCollectionSheet = async (req: Request, res: Response): Pro
 
     const rows = center.customers.flatMap((customer) =>
       customer.loans.map((loan) => {
-        const demand = nextInstallmentDemand(
+        const demand = loanDemandForCollectionDate(
           loan.schedules || [],
+          collectionDate,
           loan.perDueAmount,
           loan.outstandingAmount
         );
@@ -467,6 +469,7 @@ export const getCenterCollectionSheet = async (req: Request, res: Response): Pro
       employee: center.employee,
       rows,
       totalDemand: rows.reduce((sum, r) => sum + (r.demand || 0), 0),
+      collectionDate: collectionDate || null,
     });
   } catch (error) {
     console.error('Error fetching center collection sheet:', error);

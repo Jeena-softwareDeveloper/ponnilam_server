@@ -5,6 +5,8 @@ import {
   buildScheduleRows,
   sumUnpaidFromSchedules,
   nextInstallmentDemand,
+  installmentDemandForDueDate,
+  loanDemandForCollectionDate,
   allocateCollectionPool,
   resolveLastEmiAmount,
   incrementDueDate,
@@ -61,6 +63,18 @@ describe('nextInstallmentDemand', () => {
 
   it('falls back to perDueAmount when no schedules', () => {
     assert.equal(nextInstallmentDemand([], 650, 5000), 650);
+  });
+});
+
+describe('installmentDemandForDueDate', () => {
+  it('returns demand only for schedules due on the selected date', () => {
+    const schedules = [
+      { emiAmount: 650, amountPaid: 0, status: ScheduleStatus.PENDING, dueDate: '2026-07-04' },
+      { emiAmount: 650, amountPaid: 0, status: ScheduleStatus.PENDING, dueDate: '2026-07-11' },
+    ];
+    assert.equal(installmentDemandForDueDate(schedules, '2026-07-04', 5000), 650);
+    assert.equal(installmentDemandForDueDate(schedules, '2026-07-11', 5000), 650);
+    assert.equal(installmentDemandForDueDate(schedules, '2026-07-05', 5000), 0);
   });
 });
 

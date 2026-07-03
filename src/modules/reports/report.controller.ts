@@ -1,8 +1,8 @@
 import { Request, Response } from 'express';
 import prisma from '../../utils/prisma';
 import { LOAN_COLLECTIBLE_STATUSES, UNPAID_SCHEDULE_STATUSES } from '../../utils/prisma-enums';
-import { nextInstallmentDemand } from '../../utils/loan.utils';
-import { getDateRangeBounds, getDayRange } from '../../utils/date.utils';
+import { nextInstallmentDemand, loanDemandForCollectionDate } from '../../utils/loan.utils';
+import { getDateRangeBounds, getDayRange, getTodayLocalISO, toCollectionDay } from '../../utils/date.utils';
 import { assertMenuPermission } from '../../utils/validation.helpers';
 
 const REPORTS_MENU = '/admin/reports';
@@ -80,34 +80,87 @@ export const getCollectionReport = async (req: Request, res: Response) => {
   }
 };
 
+function buildCenterDetailWhere(
+  req: Request,
+  res: Response,
+  query: Record<string, string>
+): Record<string, unknown> {
+  const { branchId, areaId, centerId, staffId } = query;
+  const user = (req as any).user;
+  const userBranchId = user?.branchId;
+
+  const where: Record<string, unknown> = {};
+  if (centerId) where.id = centerId;
+  if (staffId) where.employeeId = staffId;
+
+  if (res.locals.areaIds?.length) {
+    const areaIds = res.locals.areaIds as string[];
+    where.areaId =
+      areaId && areaIds.includes(areaId) ? areaId : { in: areaIds };
+  } else if (userBranchId) {
+    where.area = { branchId: userBranchId, ...(areaId ? { id: areaId } : {}) };
+  } else if (areaId) {
+    where.areaId = areaId;
+  } else if (branchId && branchId !== 'all') {
+    where.area = { branchId };
+  }
+
+  return where;
+}
+
+function pickDefaultCollectionDate(dates: string[]): string {
+  if (!dates.length) return '';
+  const today = getTodayLocalISO();
+  const upcoming = dates.find((d) => d >= today);
+  if (upcoming) return upcoming;
+  return dates[dates.length - 1];
+}
+
+export const getCenterDetailCollectionWeeks = async (req: Request, res: Response) => {
+  try {
+    if (!(await ensureReportAccess(req, res))) return;
+
+    const query = req.query as Record<string, string>;
+    const centerWhere = buildCenterDetailWhere(req, res, query);
+
+    const schedules = await prisma.loanSchedule.findMany({
+      where: {
+        status: { in: UNPAID_SCHEDULE_STATUSES },
+        loan: {
+          status: { in: LOAN_COLLECTIBLE_STATUSES },
+          customer: { center: centerWhere },
+        },
+      },
+      select: { dueDate: true },
+      orderBy: { dueDate: 'asc' },
+    });
+
+    const uniqueDates = [
+      ...new Set(
+        schedules
+          .map((s) => (s.dueDate ? toCollectionDay(s.dueDate) : ''))
+          .filter(Boolean)
+      ),
+    ];
+
+    res.json({
+      dates: uniqueDates.map((value) => ({ value, label: value })),
+      defaultDate: pickDefaultCollectionDate(uniqueDates),
+    });
+  } catch (error) {
+    console.error('Center Detail Collection Weeks Error:', error);
+    res.status(500).json({ error: 'Failed to load collection weeks' });
+  }
+};
+
 // 2. Center Detail Report
 export const getCenterDetailReport = async (req: Request, res: Response) => {
   try {
     if (!(await ensureReportAccess(req, res))) return;
 
-    const { branchId, areaId, centerId, staffId } = req.query as Record<string, string>;
-    const user = (req as any).user;
-    const userBranchId = user?.branchId;
-
-    const where: any = {};
-    if (centerId) {
-      where.id = centerId;
-    }
-    if (staffId) {
-      where.employeeId = staffId;
-    }
-    
-    if (res.locals.areaIds?.length) {
-      where.areaId = areaId && (res.locals.areaIds as string[]).includes(areaId)
-        ? areaId
-        : { in: res.locals.areaIds };
-    } else if (userBranchId) {
-      where.area = { ...where.area, branchId: userBranchId, ...(areaId ? { id: areaId } : {}) };
-    } else if (areaId) {
-      where.areaId = areaId;
-    } else if (branchId && branchId !== 'all') {
-      where.area = { ...where.area, branchId };
-    }
+    const query = req.query as Record<string, string>;
+    const { collectionDate } = query;
+    const where = buildCenterDetailWhere(req, res, query);
 
     const centers = await prisma.center.findMany({
       where,
@@ -139,7 +192,12 @@ export const getCenterDetailReport = async (req: Request, res: Response) => {
       const activeLoans = center.customers.flatMap(c => c.loans);
       const totalOutstanding = activeLoans.reduce((sum, l) => sum + l.outstandingAmount, 0);
       const expectedCollection = activeLoans.reduce((sum, l) => {
-        return sum + nextInstallmentDemand(l.schedules || [], l.perDueAmount, l.outstandingAmount);
+        return sum + loanDemandForCollectionDate(
+          l.schedules || [],
+          collectionDate,
+          l.perDueAmount,
+          l.outstandingAmount
+        );
       }, 0);
       return {
         ...center,

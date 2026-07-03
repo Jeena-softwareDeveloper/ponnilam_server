@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { ScheduleStatus, UNPAID_SCHEDULE_STATUSES } from './prisma-enums';
+import { toCollectionDay } from './date.utils';
 
 type Tx = Prisma.TransactionClient;
 
@@ -92,6 +93,36 @@ export function nextInstallmentDemand(
 
   const fallback = perDueAmount || outstandingAmount;
   return Math.min(outstandingAmount, fallback);
+}
+
+/** Demand for a specific weekly collection date (repayment schedule due date). */
+export function installmentDemandForDueDate(
+  schedules: ScheduleDemandRow[],
+  collectionDate: string,
+  outstandingAmount: number
+): number {
+  if (!collectionDate || outstandingAmount <= 0) return 0;
+  const target = toCollectionDay(collectionDate);
+  let total = 0;
+  for (const s of schedules) {
+    if (!UNPAID_SCHEDULE_STATUSES.includes(s.status as ScheduleStatus)) continue;
+    if (!s.dueDate || toCollectionDay(s.dueDate) !== target) continue;
+    const remaining = s.emiAmount - (s.amountPaid || 0);
+    if (remaining > 0) total += remaining;
+  }
+  return total;
+}
+
+export function loanDemandForCollectionDate(
+  schedules: ScheduleDemandRow[],
+  collectionDate: string | undefined,
+  perDueAmount: number,
+  outstandingAmount: number
+): number {
+  if (collectionDate) {
+    return installmentDemandForDueDate(schedules, collectionDate, outstandingAmount);
+  }
+  return nextInstallmentDemand(schedules, perDueAmount, outstandingAmount);
 }
 
 export type ScheduleAllocRow = ScheduleAmountRow & { id: string };
