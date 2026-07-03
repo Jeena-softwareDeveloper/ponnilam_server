@@ -1,13 +1,14 @@
 /**
- * Compact existing customer numbers per prefix (NAG001, NAG002, …) by registration date.
- * Fills gaps from deleted customers. Uses a two-phase rename to avoid unique collisions.
+ * Compact existing customer numbers per center (NAG001, NAG002, …) by registration date.
+ * Updates Customer.customerNo only — loans, collections, prints, reports all read via join.
  *
  * Usage:
- *   npx ts-node prisma/renumber-customer-nos.ts --dry-run
- *   npx ts-node prisma/renumber-customer-nos.ts
+ *   npm run db:renumber-customers:dry-run
+ *   npm run db:renumber-customers
  */
 import './load-env';
 import prisma from '../src/utils/prisma';
+import { nameCodePrefix } from '../src/utils/sequence.utils';
 
 const dryRun = process.argv.includes('--dry-run');
 
@@ -16,6 +17,9 @@ type CustomerRow = {
   customerNo: string;
   name: string;
   createdAt: Date;
+  centerId: string | null;
+  centerName: string | null;
+  branchId: string;
 };
 
 function parseCustomerNo(customerNo: string): { prefix: string; suffix: number } | null {
@@ -30,40 +34,80 @@ function formatNo(prefix: string, n: number): string {
   return `${prefix}${n.toString().padStart(3, '0')}`;
 }
 
+function groupKey(row: CustomerRow): string {
+  if (row.centerId) return `center:${row.centerId}`;
+  const parsed = parseCustomerNo(row.customerNo);
+  if (parsed) return `prefix:${parsed.prefix}`;
+  return `branch:${row.branchId}`;
+}
+
+function resolvePrefix(row: CustomerRow): string {
+  if (row.centerName) return nameCodePrefix(row.centerName);
+  const parsed = parseCustomerNo(row.customerNo);
+  return parsed?.prefix ?? 'CUS';
+}
+
 async function main() {
-  const customers = await prisma.customer.findMany({
-    select: { id: true, customerNo: true, name: true, createdAt: true },
+  const rows = await prisma.customer.findMany({
+    select: {
+      id: true,
+      customerNo: true,
+      name: true,
+      createdAt: true,
+      centerId: true,
+      center: { select: { name: true } },
+      area: { select: { branchId: true } },
+    },
     orderBy: { createdAt: 'asc' },
   });
 
-  const byPrefix = new Map<string, CustomerRow[]>();
+  const customers: CustomerRow[] = rows.map((r) => ({
+    id: r.id,
+    customerNo: r.customerNo,
+    name: r.name,
+    createdAt: r.createdAt,
+    centerId: r.centerId,
+    centerName: r.center?.name ?? null,
+    branchId: r.area.branchId,
+  }));
+
+  const byGroup = new Map<string, CustomerRow[]>();
   const skipped: string[] = [];
 
   for (const c of customers) {
-    const parsed = parseCustomerNo(c.customerNo);
-    if (!parsed) {
+    if (!c.centerId && !parseCustomerNo(c.customerNo)) {
       skipped.push(c.customerNo);
       continue;
     }
-    const list = byPrefix.get(parsed.prefix) ?? [];
+    const key = groupKey(c);
+    const list = byGroup.get(key) ?? [];
     list.push(c);
-    byPrefix.set(parsed.prefix, list);
+    byGroup.set(key, list);
   }
 
   if (skipped.length) {
     console.log(`Skipping ${skipped.length} customer(s) with non-standard numbers: ${skipped.join(', ')}`);
   }
 
-  const changes: { id: string; from: string; to: string; name: string }[] = [];
+  const changes: { id: string; from: string; to: string; name: string; center: string }[] = [];
+  const prefixMax = new Map<string, number>();
 
-  for (const [prefix, rows] of byPrefix) {
-    rows.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
-    rows.forEach((row, index) => {
+  for (const [, groupRows] of byGroup) {
+    groupRows.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+    const prefix = resolvePrefix(groupRows[0]);
+    groupRows.forEach((row, index) => {
       const target = formatNo(prefix, index + 1);
       if (row.customerNo !== target) {
-        changes.push({ id: row.id, from: row.customerNo, to: target, name: row.name });
+        changes.push({
+          id: row.id,
+          from: row.customerNo,
+          to: target,
+          name: row.name,
+          center: row.centerName || prefix,
+        });
       }
     });
+    prefixMax.set(prefix, Math.max(prefixMax.get(prefix) ?? 0, groupRows.length));
   }
 
   if (!changes.length) {
@@ -73,7 +117,7 @@ async function main() {
 
   console.log(`${dryRun ? '[dry-run] ' : ''}Will renumber ${changes.length} customer(s):\n`);
   for (const ch of changes) {
-    console.log(`  ${ch.from} → ${ch.to}  (${ch.name})`);
+    console.log(`  ${ch.from} → ${ch.to}  (${ch.name} — ${ch.center})`);
   }
 
   if (dryRun) {
@@ -95,10 +139,6 @@ async function main() {
       });
     }
 
-    const prefixMax = new Map<string, number>();
-    for (const [prefix, rows] of byPrefix) {
-      prefixMax.set(prefix, rows.length);
-    }
     for (const [prefix, max] of prefixMax) {
       const key = `CUS:${prefix}`;
       await tx.sequence.upsert({
@@ -110,7 +150,7 @@ async function main() {
     }
   });
 
-  console.log(`\nDone — renumbered ${changes.length} customer(s).`);
+  console.log(`\nDone — renumbered ${changes.length} customer(s). Refresh the app to see updates everywhere.`);
 }
 
 main()
