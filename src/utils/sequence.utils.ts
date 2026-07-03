@@ -147,22 +147,49 @@ export async function nextCustomerNo(
   throw new Error(`Unable to allocate unique customer number for ${prefix}`);
 }
 
+function loanNumberPattern(prefix: string): RegExp {
+  const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`^${escaped}L(\\d+)$`);
+}
+
+export async function lowestAvailableLoanSuffix(tx: Tx, prefix: string): Promise<number> {
+  const rows = await tx.loan.findMany({
+    where: { loanNumber: { startsWith: prefix } },
+    select: { loanNumber: true },
+  });
+  const pattern = loanNumberPattern(prefix);
+  const used: number[] = [];
+  for (const row of rows) {
+    const m = String(row.loanNumber || '').match(pattern);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (!isNaN(n)) used.push(n);
+    }
+  }
+  return lowestAvailableSuffix(used);
+}
+
 export async function nextLoanNumber(tx: Tx, branchId?: string): Promise<string> {
   const prefix = await loanPrefix(branchId, tx);
   const key = `LOAN:${prefix}`;
-  return allocateUniqueFormatted(
-    tx,
-    key,
-    (n) => `${prefix}L${n.toString().padStart(4, '0')}`,
-    (loanNumber) => tx.loan.findFirst({ where: { loanNumber }, select: { id: true } }).then(Boolean),
-    async (innerTx) => {
-      const rows = await innerTx.loan.findMany({
-        where: { loanNumber: { startsWith: prefix } },
-        select: { loanNumber: true },
+  const format = (n: number) => `${prefix}L${n.toString().padStart(4, '0')}`;
+
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const n = await lowestAvailableLoanSuffix(tx, prefix);
+    const loanNumber = format(n);
+    const taken = await tx.loan.findFirst({ where: { loanNumber }, select: { id: true } });
+    if (!taken) {
+      const existingSeq = await tx.sequence.findUnique({ where: { id: key } });
+      const seqValue = Math.max(existingSeq?.value ?? 0, n);
+      await tx.sequence.upsert({
+        where: { id: key },
+        create: { id: key, value: seqValue },
+        update: { value: seqValue },
       });
-      return maxNumericSuffix(innerTx, rows.map((r) => ({ value: r.loanNumber })), new RegExp(`^${prefix.replace('-', '\\-')}L(\\d+)$`));
+      return loanNumber;
     }
-  );
+  }
+  throw new Error(`Unable to allocate unique loan number for ${prefix}`);
 }
 
 export async function nextTrnNumber(tx: Tx): Promise<string> {
