@@ -188,25 +188,27 @@ export const getCenterDetailReport = async (req: Request, res: Response) => {
       orderBy: { name: 'asc' }
     });
 
-    const enriched = centers.map(center => {
-      const activeLoans = center.customers.flatMap(c => c.loans);
-      const totalOutstanding = activeLoans.reduce((sum, l) => sum + l.outstandingAmount, 0);
-      const expectedCollection = activeLoans.reduce((sum, l) => {
-        return sum + loanDemandForCollectionDate(
-          l.schedules || [],
-          collectionDate,
-          l.perDueAmount,
-          l.outstandingAmount
-        );
-      }, 0);
-      return {
-        ...center,
-        totalMembers: center.customers.length,
-        activeLoans: activeLoans.length,
-        totalOutstanding,
-        expectedCollection
-      };
-    });
+    const enriched = centers
+      .map((center) => {
+        const activeLoans = center.customers.flatMap((c) => c.loans);
+        const totalOutstanding = activeLoans.reduce((sum, l) => sum + l.outstandingAmount, 0);
+        const expectedCollection = activeLoans.reduce((sum, l) => {
+          return sum + loanDemandForCollectionDate(
+            l.schedules || [],
+            collectionDate,
+            l.perDueAmount,
+            l.outstandingAmount
+          );
+        }, 0);
+        return {
+          ...center,
+          totalMembers: center.customers.length,
+          activeLoans: activeLoans.length,
+          totalOutstanding,
+          expectedCollection,
+        };
+      })
+      .filter((center) => !collectionDate || center.expectedCollection > 0);
 
     res.json(enriched);
   } catch (error) {

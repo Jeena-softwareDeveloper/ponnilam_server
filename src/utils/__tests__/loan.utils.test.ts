@@ -76,6 +76,16 @@ describe('installmentDemandForDueDate', () => {
     assert.equal(installmentDemandForDueDate(schedules, '2026-07-11', 5000), 650);
     assert.equal(installmentDemandForDueDate(schedules, '2026-07-05', 5000), 0);
   });
+
+  it('uses due-date demand only when collectionDate is set', () => {
+    const schedules = [
+      { emiAmount: 650, amountPaid: 0, status: ScheduleStatus.PENDING, dueDate: '2026-07-06' },
+      { emiAmount: 650, amountPaid: 0, status: ScheduleStatus.PENDING, dueDate: '2026-07-13' },
+    ];
+    assert.equal(loanDemandForCollectionDate(schedules, '2026-07-06', 650, 5000), 650);
+    assert.equal(loanDemandForCollectionDate(schedules, '2026-07-13', 650, 5000), 650);
+    assert.equal(loanDemandForCollectionDate(schedules, '2026-07-06', 650, 0), 0);
+  });
 });
 
 describe('sumUnpaidFromSchedules', () => {
