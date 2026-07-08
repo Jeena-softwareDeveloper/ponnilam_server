@@ -176,9 +176,9 @@ export const createCenter = async (req: Request, res: Response): Promise<any> =>
       }
     }
 
-    // Auto-generate center code from branch name (e.g. branch "Erode" → ERO001)
+    // Auto-generate center code from the branch code (e.g. branch "ANT" → ANT001)
     const center = await prisma.$transaction(async (tx) => {
-      const generatedCode = await generateCenterCodeInTx(tx, area.branch.name, area.branchId);
+      const generatedCode = await generateCenterCodeInTx(tx, area.branch.code, area.branchId);
       return tx.center.create({
         data: {
           name,
@@ -206,8 +206,9 @@ export const updateCenter = async (req: Request, res: Response): Promise<any> =>
     if (await denyUnlessMenuPermission(req, res, MENU_PATH, 'canEdit')) return;
 
     const { id } = req.params;
-    const { name, code, centerTime, repaymentType, disbursMode, areaId, employeeId, isActive, totalMembers } = req.body as {
-      name?: string; code?: string; centerTime?: string;
+    // Center code is auto-generated and immutable — it is never accepted from the request on edit.
+    const { name, centerTime, repaymentType, disbursMode, areaId, employeeId, isActive, totalMembers } = req.body as {
+      name?: string; centerTime?: string;
       repaymentType?: string; disbursMode?: string; areaId?: string;
       employeeId?: string; isActive?: boolean; totalMembers?: any;
     };
@@ -259,7 +260,6 @@ export const updateCenter = async (req: Request, res: Response): Promise<any> =>
       where: { id: String(id) },
       data: {
         ...(name !== undefined && { name }),
-        ...(code !== undefined && { code }),
         ...(centerTime !== undefined && { centerTime }),
         ...(repaymentType !== undefined && { repaymentType }),
         ...(disbursMode !== undefined && { disbursMode }),
@@ -356,14 +356,14 @@ export const importCustomersToNewCenter = async (req: Request, res: Response): P
       return res.status(400).json({ error: 'Select at least one customer from the source center to import.' });
     }
 
-    const branchName = sourceCenter.area?.branch?.name || 'Branch';
+    const branchCode = sourceCenter.area?.branch?.code;
     const branchId = sourceCenter.area?.branchId || sourceCenter.area?.branch?.id;
-    if (!branchId) {
+    if (!branchId || !branchCode) {
       return res.status(400).json({ error: 'Source center branch not found' });
     }
 
     const result = await prisma.$transaction(async (tx) => {
-      const generatedCode = await generateCenterCodeInTx(tx, branchName, branchId);
+      const generatedCode = await generateCenterCodeInTx(tx, branchCode, branchId);
       const groupCodePrefix = generatedCode.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12) || 'CTR';
 
       const newCenter = await tx.center.create({
