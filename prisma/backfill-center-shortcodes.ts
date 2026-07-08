@@ -25,6 +25,16 @@ import { generateShortCodeFromName } from '../src/utils/center-short-code.servic
 const DRY_RUN = process.argv.includes('--dry-run');
 
 // ---------------------------------------------------------------------------
+// ✏️  MANUAL OVERRIDES
+// Add any center name here (exact match, case-insensitive) to force a
+// specific short code instead of the auto-generated one.
+// Example: 'A JEEVITHA PALLIPALAYAM' → 'JPA'
+// ---------------------------------------------------------------------------
+const MANUAL_OVERRIDES: Record<string, string> = {
+  'A JEEVITHA PALLIPALAYAM': 'JPA',
+};
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -93,7 +103,13 @@ async function main() {
   }> = [];
 
   for (const center of centers) {
-    const base = generateShortCodeFromName(center.name);
+    // Check manual override first (case-insensitive key match)
+    const overrideKey = Object.keys(MANUAL_OVERRIDES).find(
+      (k) => k.toUpperCase() === center.name.toUpperCase()
+    );
+    const base = overrideKey
+      ? MANUAL_OVERRIDES[overrideKey].toUpperCase()
+      : generateShortCodeFromName(center.name);
 
     // Find a unique code
     let code = base;
