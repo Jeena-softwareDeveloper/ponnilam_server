@@ -8,7 +8,7 @@ import {
   resolveLastEmiAmount,
 } from '../src/utils/loan.utils';
 import { LoanStatus } from '../src/utils/prisma-enums';
-import { nextCustomerNo } from '../src/utils/sequence.utils';
+import { generateCustomerNumber } from '../src/services/customer-number.service';
 
 /** Max members per group — when exceeded, center splits into Group B, then Group C */
 const PER_GROUP_LIMIT = 3;
@@ -350,7 +350,7 @@ async function ensureCustomerWithLoan(
 
   if (!customer) {
     customer = await prisma.$transaction(async (tx) => {
-      const customerNo = await nextCustomerNo(tx, opts.centerId, opts.branchId);
+      const customerNo = await generateCustomerNumber(tx, { centerId: opts.centerId, branchId: opts.branchId });
       return tx.customer.create({
         data: {
           customerNo,

@@ -16,6 +16,7 @@ function sortCustomersByRegistration<
 }
 import { denyUnlessMenuPermission } from '../../utils/master-permissions';
 import { generateCenterCodeInTx } from '../../utils/center-code.utils';
+import { allocateCenterShortCode } from '../../utils/center-short-code.service';
 
 const MENU_PATH = '/admin/masters/centers';
 
@@ -176,13 +177,15 @@ export const createCenter = async (req: Request, res: Response): Promise<any> =>
       }
     }
 
-    // Auto-generate center code from the branch code (e.g. branch "ANT" → ANT001)
+    // Auto-generate center code (branch-level, e.g. ANT001) and short code (customer-number prefix, e.g. JKA)
     const center = await prisma.$transaction(async (tx) => {
       const generatedCode = await generateCenterCodeInTx(tx, area.branch.code, area.branchId);
+      const shortCode = await allocateCenterShortCode(tx, null, name);
       return tx.center.create({
         data: {
           name,
           code: generatedCode,
+          shortCode,
           centerTime: centerTime || null,
           repaymentType: repaymentType || 'WEEKLY',
           disbursMode: disbursMode || 'CASH',
@@ -364,12 +367,14 @@ export const importCustomersToNewCenter = async (req: Request, res: Response): P
 
     const result = await prisma.$transaction(async (tx) => {
       const generatedCode = await generateCenterCodeInTx(tx, branchCode, branchId);
+      const shortCode = await allocateCenterShortCode(tx, null, newCenterName.trim());
       const groupCodePrefix = generatedCode.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12) || 'CTR';
 
       const newCenter = await tx.center.create({
         data: {
           name: newCenterName.trim(),
           code: generatedCode,
+          shortCode,
           centerTime: sourceCenter.centerTime,
           repaymentType: sourceCenter.repaymentType,
           disbursMode: sourceCenter.disbursMode,

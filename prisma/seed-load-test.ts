@@ -13,7 +13,7 @@ import {
   resolveLastEmiAmount,
 } from '../src/utils/loan.utils';
 import { LoanStatus } from '../src/utils/prisma-enums';
-import { nextCustomerNo } from '../src/utils/sequence.utils';
+import { generateCustomerNumber } from '../src/services/customer-number.service';
 
 const TARGET = Math.max(1, parseInt(process.env.LOAD_TEST_CUSTOMERS || '1000', 10) || 1000);
 const BATCH = 50;
@@ -70,7 +70,7 @@ async function main() {
     await prisma.$transaction(async (tx) => {
       for (let i = 0; i < batchSize; i++) {
         const n = existing + created + i + 1;
-        const customerNo = await nextCustomerNo(tx, center.id, branchId);
+        const customerNo = await generateCustomerNumber(tx, { centerId: center.id, branchId });
         const mobile = String(9100000000 + n);
 
         const customer = await tx.customer.create({

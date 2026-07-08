@@ -100,6 +100,7 @@ model Center {
   id            String  @id @default(uuid())
   name          String
   code          String? @unique
+  shortCode     String? @unique // 3-char initials-based customer-number prefix (e.g. JKA, JPA, JPK)
   centerTime    String?
   repaymentType String  @default("WEEKLY")
   disbursMode   String  @default("CASH")

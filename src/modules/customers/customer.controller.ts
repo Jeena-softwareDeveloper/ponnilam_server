@@ -3,7 +3,7 @@ import { Request, Response } from 'express';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { requireBranchAccess } from '../../utils/security.utils';
 import { OPEN_LOAN_STATUSES } from '../../utils/prisma-enums';
-import { nextCustomerNo } from '../../utils/sequence.utils';
+import { generateCustomerNumber } from '../../services/customer-number.service';
 import { parsePagination, paginatedResponse } from '../../utils/pagination.utils';
 import { validateCenterMemberLimit, validateCustomerCenterAssignment, validateGroupMemberLimit } from '../../utils/center-member.utils';
 import { assertMenuPermission, checkAreaScope, isValidMobile, resolveStaffId, assertUniqueCustomerMobile } from '../../utils/validation.helpers';
@@ -98,7 +98,7 @@ export const createCustomer = asyncHandler(async (req: Request, res: Response) =
     const branchIdForNo = area.branchId || user?.branchId || undefined;
 
     const customer = await prisma.$transaction(async (tx) => {
-      const customerNo = await nextCustomerNo(tx, general.centerId, branchIdForNo);
+      const customerNo = await generateCustomerNumber(tx, { centerId: general.centerId, branchId: branchIdForNo });
       return tx.customer.create({
       data: {
         customerNo,
