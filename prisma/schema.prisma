@@ -351,6 +351,8 @@ model CustomerCoApplicant {
   dob          DateTime?
   relationship String?
   occupation   String?
+  aadharNo     String?
+  gender       String?
 
   customerId String   @unique
   customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)

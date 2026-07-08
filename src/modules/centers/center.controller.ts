@@ -487,7 +487,6 @@ function parseGroupIndex(name: string): number {
   return match ? parseInt(match[1], 10) : 999;
 }
 
-/** Group loan joint liability print data — members grouped by G1, G2, … */
 export const getCenterJointLiabilitySheet = async (req: Request, res: Response): Promise<any> => {
   try {
     const centerId = String(req.params.id);

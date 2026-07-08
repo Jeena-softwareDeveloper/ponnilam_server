@@ -128,7 +128,9 @@ export const createCustomer = asyncHandler(async (req: Request, res: Response) =
             name: coApplicant.name,
             dob: coApplicant.dob ? new Date(coApplicant.dob) : null,
             relationship: coApplicant.relationship,
-            occupation: coApplicant.occupation
+            occupation: coApplicant.occupation,
+            aadharNo: coApplicant.aadharNo || null,
+            gender: coApplicant.gender || null,
           }
         } : undefined,
 
@@ -324,13 +326,17 @@ export const updateCustomer = asyncHandler(async (req: Request, res: Response) =
             name: coApplicant.name,
             dob: coApplicant.dob ? new Date(coApplicant.dob) : null,
             relationship: coApplicant.relationship,
-            occupation: coApplicant.occupation
+            occupation: coApplicant.occupation,
+            aadharNo: coApplicant.aadharNo || null,
+            gender: coApplicant.gender || null,
           },
           update: {
             name: coApplicant.name,
             dob: coApplicant.dob ? new Date(coApplicant.dob) : null,
             relationship: coApplicant.relationship,
-            occupation: coApplicant.occupation
+            occupation: coApplicant.occupation,
+            aadharNo: coApplicant.aadharNo || null,
+            gender: coApplicant.gender || null,
           }
         }
       };
@@ -458,6 +464,7 @@ export const getCustomers = asyncHandler(async (req: Request, res: Response) => 
           group: true,
           employee: true,
           center: true,
+          coApplicant: true,
         },
         orderBy: { createdAt: 'desc' },
         skip,
