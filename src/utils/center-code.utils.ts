@@ -9,6 +9,12 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/** First 3 letters of branch name — e.g. "Erode" → "ERO", "Anthiyur" → "ANT", "Sathyamangalam" → "SAT". */
+export function branchCodePrefix(branchName: string | null | undefined): string {
+  const cleaned = (branchName || '').trim().replace(/[^a-zA-Z]/g, '').toUpperCase();
+  return cleaned.substring(0, 3) || 'CTR';
+}
+
 /** Normalize a branch code into an uppercase alphanumeric center-code prefix (e.g. "ant" → "ANT"). */
 export function normalizeBranchCode(branchCode: string | null | undefined): string {
   return (branchCode || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -38,18 +44,25 @@ export function highestCenterSequence(
 
 /**
  * Allocate the next unique center code inside a transaction (race-safe), scoped per branch.
- * Format: <BranchCode><3-digit sequence>, e.g. ANT001, ANT002, ANT003.
+ * Format: <BranchPrefix><3-digit sequence>, e.g. ANT001, ANT002, ANT003 or ERO001.
  * The sequence always continues beyond the branch's current maximum and is verified
  * against a global uniqueness check, so codes are never reused.
  */
 export async function generateCenterCodeInTx(
   tx: Tx,
   branchCode: string | null | undefined,
-  branchId: string
+  branchId: string,
+  branchName?: string | null | undefined
 ): Promise<string> {
-  const prefix = normalizeBranchCode(branchCode);
+  let prefix = '';
+  if (branchName) {
+    prefix = branchCodePrefix(branchName);
+  }
+  if (!prefix || prefix === 'CTR') {
+    prefix = normalizeBranchCode(branchCode);
+  }
   if (!prefix) {
-    throw new Error('A valid branch code is required to generate a center code');
+    throw new Error('A valid branch code or name is required to generate a center code');
   }
 
   const existing = await tx.center.findMany({

@@ -179,7 +179,7 @@ export const createCenter = async (req: Request, res: Response): Promise<any> =>
 
     // Auto-generate center code (branch-level, e.g. ANT001) and short code (customer-number prefix, e.g. JKA)
     const center = await prisma.$transaction(async (tx) => {
-      const generatedCode = await generateCenterCodeInTx(tx, area.branch.code, area.branchId);
+      const generatedCode = await generateCenterCodeInTx(tx, area.branch.code, area.branchId, area.branch.name);
       const shortCode = await allocateCenterShortCode(tx, null, name);
       return tx.center.create({
         data: {
@@ -360,13 +360,14 @@ export const importCustomersToNewCenter = async (req: Request, res: Response): P
     }
 
     const branchCode = sourceCenter.area?.branch?.code;
+    const branchName = sourceCenter.area?.branch?.name;
     const branchId = sourceCenter.area?.branchId || sourceCenter.area?.branch?.id;
-    if (!branchId || !branchCode) {
+    if (!branchId || (!branchCode && !branchName)) {
       return res.status(400).json({ error: 'Source center branch not found' });
     }
 
     const result = await prisma.$transaction(async (tx) => {
-      const generatedCode = await generateCenterCodeInTx(tx, branchCode, branchId);
+      const generatedCode = await generateCenterCodeInTx(tx, branchCode, branchId, branchName);
       const shortCode = await allocateCenterShortCode(tx, null, newCenterName.trim());
       const groupCodePrefix = generatedCode.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12) || 'CTR';
 

@@ -1,10 +1,26 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  branchCodePrefix,
   normalizeBranchCode,
   formatCenterCode,
   highestCenterSequence,
 } from '../center-code.utils';
+
+describe('branchCodePrefix', () => {
+  it('extracts first 3 alpha letters of branch name', () => {
+    assert.equal(branchCodePrefix('Erode'), 'ERO');
+    assert.equal(branchCodePrefix('Anthiyur'), 'ANT');
+    assert.equal(branchCodePrefix('Sathyamangalam'), 'SAT');
+    assert.equal(branchCodePrefix('  Pallipalayam '), 'PAL');
+  });
+
+  it('falls back to CTR if no letters found', () => {
+    assert.equal(branchCodePrefix(''), 'CTR');
+    assert.equal(branchCodePrefix(null), 'CTR');
+    assert.equal(branchCodePrefix('1234'), 'CTR');
+  });
+});
 
 describe('normalizeBranchCode', () => {
   it('uppercases and strips non-alphanumerics', () => {
