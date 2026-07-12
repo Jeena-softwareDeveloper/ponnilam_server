@@ -1,0 +1,485 @@
+import { Request, Response } from 'express';
+import prisma from '../../utils/prisma';
+import { LOAN_COLLECTIBLE_STATUSES, UNPAID_SCHEDULE_STATUSES } from '../../utils/prisma-enums';
+import { nextInstallmentDemand, loanDemandForCollectionDate } from '../../utils/loan.utils';
+import { getDateRangeBounds, getDayRange, getTodayLocalISO, toCollectionDay } from '../../utils/date.utils';
+import { assertMenuPermission } from '../../utils/validation.helpers';
+
+const REPORTS_MENU = '/admin/reports';
+
+async function ensureReportAccess(req: Request, res: Response): Promise<boolean> {
+  const user = (req as any).user;
+  const err = await assertMenuPermission(user, REPORTS_MENU, 'canView');
+  if (err) {
+    res.status(403).json({ error: err });
+    return false;
+  }
+  return true;
+}
+
+// Helper: apply branch/area scope from middleware
+const scopeCustomerFilter = (req: Request, res: Response, base: any = {}) => {
+  const areaIds = res.locals.areaIds as string[] | undefined;
+  if (areaIds?.length) {
+    return { ...base, areaId: { in: areaIds } };
+  }
+  const user = (req as any).user;
+  if (user?.branchId) {
+    return { ...base, area: { branchId: user.branchId } };
+  }
+  return base;
+};
+const buildDateWhere = (startDate?: string, endDate?: string, type?: string) => {
+  if (startDate && endDate) {
+    return getDateRangeBounds(startDate, endDate);
+  }
+  if (type === 'DAILY') {
+    const { dayStart } = getDayRange(new Date());
+    return { gte: dayStart };
+  }
+  const start = new Date();
+  start.setDate(1);
+  const { dayStart } = getDayRange(start);
+  return { gte: dayStart };
+};
+
+// 1. Collection Report
+export const getCollectionReport = async (req: Request, res: Response) => {
+  try {
+    if (!(await ensureReportAccess(req, res))) return;
+
+    const { startDate, endDate, branchId, type, staffId, centerId } = req.query as Record<string, string>;
+    const where: any = { isVoided: false, trnDate: buildDateWhere(startDate, endDate, type) };
+
+    const user = (req as any).user;
+    const userBranchId = user?.branchId;
+
+    if (res.locals.areaIds?.length > 0) {
+      where.loan = { ...where.loan, customer: { ...where.loan?.customer, areaId: { in: res.locals.areaIds } } };
+    } else if (userBranchId) {
+      where.loan = { ...where.loan, customer: { ...where.loan?.customer, area: { branchId: userBranchId } } };
+    } else if (branchId && branchId !== 'all') {
+      where.loan = { ...where.loan, customer: { ...where.loan?.customer, area: { branchId } } };
+    }
+    if (staffId) where.staffId = staffId;
+    if (centerId) where.loan = { ...where.loan, customer: { ...where.loan?.customer, centerId } };
+
+    const collections = await prisma.collection.findMany({
+      where,
+      include: {
+        loan: { include: { customer: { include: { area: { include: { branch: true } }, center: true } } } },
+        staff: { select: { name: true, username: true, phone: true, staffNo: true } }
+      },
+      orderBy: { trnDate: 'desc' }
+    });
+
+    res.json(collections);
+  } catch (error) {
+    console.error('Collection Report Error:', error);
+    res.status(500).json({ error: 'Failed to generate collection report' });
+  }
+};
+
+function buildCenterDetailWhere(
+  req: Request,
+  res: Response,
+  query: Record<string, string>
+): Record<string, unknown> {
+  const { branchId, areaId, centerId, staffId } = query;
+  const user = (req as any).user;
+  const userBranchId = user?.branchId;
+
+  const where: Record<string, unknown> = {};
+  if (centerId) where.id = centerId;
+  if (staffId) where.employeeId = staffId;
+
+  if (res.locals.areaIds?.length) {
+    const areaIds = res.locals.areaIds as string[];
+    where.areaId =
+      areaId && areaIds.includes(areaId) ? areaId : { in: areaIds };
+  } else if (userBranchId) {
+    where.area = { branchId: userBranchId, ...(areaId ? { id: areaId } : {}) };
+  } else if (areaId) {
+    where.areaId = areaId;
+  } else if (branchId && branchId !== 'all') {
+    where.area = { branchId };
+  }
+
+  return where;
+}
+
+function pickDefaultCollectionDate(dates: string[]): string {
+  if (!dates.length) return '';
+  const today = getTodayLocalISO();
+  const upcoming = dates.find((d) => d >= today);
+  if (upcoming) return upcoming;
+  return dates[dates.length - 1];
+}
+
+export const getCenterDetailCollectionWeeks = async (req: Request, res: Response) => {
+  try {
+    if (!(await ensureReportAccess(req, res))) return;
+
+    const query = req.query as Record<string, string>;
+    const centerWhere = buildCenterDetailWhere(req, res, query);
+
+    const schedules = await prisma.loanSchedule.findMany({
+      where: {
+        status: { in: UNPAID_SCHEDULE_STATUSES },
+        loan: {
+          status: { in: LOAN_COLLECTIBLE_STATUSES },
+          customer: { center: centerWhere },
+        },
+      },
+      select: { dueDate: true },
+      orderBy: { dueDate: 'asc' },
+    });
+
+    const uniqueDates = [
+      ...new Set(
+        schedules
+          .map((s) => (s.dueDate ? toCollectionDay(s.dueDate) : ''))
+          .filter(Boolean)
+      ),
+    ];
+
+    res.json({
+      dates: uniqueDates.map((value) => ({ value, label: value })),
+      defaultDate: pickDefaultCollectionDate(uniqueDates),
+    });
+  } catch (error) {
+    console.error('Center Detail Collection Weeks Error:', error);
+    res.status(500).json({ error: 'Failed to load collection weeks' });
+  }
+};
+
+// 2. Center Detail Report
+export const getCenterDetailReport = async (req: Request, res: Response) => {
+  try {
+    if (!(await ensureReportAccess(req, res))) return;
+
+    const query = req.query as Record<string, string>;
+    const { collectionDate } = query;
+    const where = buildCenterDetailWhere(req, res, query);
+
+    const centers = await prisma.center.findMany({
+      where,
+      include: {
+        area: { include: { branch: true } },
+        employee: { select: { id: true, name: true, phone: true, username: true, staffNo: true } },
+        customers: {
+          include: {
+            loans: {
+              where: { status: { in: LOAN_COLLECTIBLE_STATUSES } },
+              select: {
+                outstandingAmount: true,
+                perDueAmount: true,
+                status: true,
+                schedules: {
+                  where: { status: { in: UNPAID_SCHEDULE_STATUSES } },
+                  orderBy: { dueDate: 'asc' },
+                  select: { emiAmount: true, amountPaid: true, status: true, dueDate: true },
+                },
+              }
+            }
+          }
+        }
+      },
+      orderBy: { name: 'asc' }
+    });
+
+    const enriched = centers
+      .map((center) => {
+        const activeLoans = center.customers.flatMap((c) => c.loans);
+        const totalOutstanding = activeLoans.reduce((sum, l) => sum + l.outstandingAmount, 0);
+        const expectedCollection = activeLoans.reduce((sum, l) => {
+          return sum + loanDemandForCollectionDate(
+            l.schedules || [],
+            collectionDate,
+            l.perDueAmount,
+            l.outstandingAmount
+          );
+        }, 0);
+        return {
+          ...center,
+          totalMembers: center.customers.length,
+          activeLoans: activeLoans.length,
+          totalOutstanding,
+          expectedCollection,
+        };
+      })
+      .filter((center) => !collectionDate || center.expectedCollection > 0);
+
+    res.json(enriched);
+  } catch (error) {
+    console.error('Center Detail Report Error:', error);
+    res.status(500).json({ error: 'Failed to generate center detail report' });
+  }
+};
+
+// 3. Center Customer List Report
+export const getCenterCustomerReport = async (req: Request, res: Response) => {
+  try {
+    if (!(await ensureReportAccess(req, res))) return;
+    const { centerId, branchId, staffId } = req.query as Record<string, string>;
+    const user = (req as any).user;
+    const userBranchId = user?.branchId;
+
+    const where: any = {};
+    if (centerId) where.centerId = centerId;
+    if (staffId) where.center = { employeeId: staffId };
+    
+    if (res.locals.areaIds?.length > 0) {
+      where.areaId = { in: res.locals.areaIds };
+    } else if (userBranchId) {
+      where.area = { branchId: userBranchId };
+    } else if (branchId && branchId !== 'all') {
+      where.area = { branchId };
+    }
+
+    const customers = await prisma.customer.findMany({
+      where,
+      include: {
+        center: {
+          select: {
+            id: true,
+            name: true,
+            code: true,
+            totalMembers: true,
+            employee: { select: { id: true, name: true, phone: true, username: true, staffNo: true } },
+          },
+        },
+        area: { include: { branch: true } },
+        group: { select: { id: true, groupName: true, groupCode: true } },
+        loans: {
+          where: { status: { in: LOAN_COLLECTIBLE_STATUSES } },
+          select: { 
+            loanNumber: true, 
+            outstandingAmount: true, 
+            perDueAmount: true,
+            noOfDues: true,
+            totalDueAmount: true,
+            status: true, 
+            amount: true,
+            schedules: {
+              where: { status: { in: UNPAID_SCHEDULE_STATUSES }, dueDate: { lt: new Date() } },
+              select: { emiAmount: true, amountPaid: true }
+            }
+          }
+        }
+      },
+      orderBy: [{ center: { name: 'asc' } }, { name: 'asc' }]
+    });
+
+    res.json(customers);
+  } catch (error) {
+    console.error('Center Customer Report Error:', error);
+    res.status(500).json({ error: 'Failed to generate customer report' });
+  }
+};
+
+// 4. Employee Wise Collection Report
+export const getEmployeeWiseReport = async (req: Request, res: Response) => {
+  try {
+    if (!(await ensureReportAccess(req, res))) return;
+    const { startDate, endDate, type, branchId } = req.query as Record<string, string>;
+    const dateWhere = buildDateWhere(startDate, endDate, type);
+
+    const user = (req as any).user;
+    const userBranchId = user?.branchId;
+
+    const where: any = { isVoided: false, trnDate: dateWhere };
+    if (res.locals.areaIds?.length) {
+      where.loan = { customer: { areaId: { in: res.locals.areaIds } } };
+    } else if (userBranchId) {
+      where.loan = { customer: { area: { branchId: userBranchId } } };
+    } else if (branchId && branchId !== 'all') {
+      where.loan = { customer: { area: { branchId } } };
+    }
+
+    const collections = await prisma.collection.findMany({
+      where,
+      include: {
+        staff: { select: { id: true, name: true, phone: true, username: true, staffNo: true } },
+        loan: { include: { customer: { include: { center: true } } } }
+      }
+    });
+
+    // Group by staff
+    const staffMap = new Map<string, any>();
+    collections.forEach(c => {
+      const staffId = c.staffId || 'unassigned';
+      const staffName = c.staff?.name || 'Unassigned';
+      if (!staffMap.has(staffId)) {
+        staffMap.set(staffId, {
+          staffId, staffName,
+          phone: c.staff?.phone || '-',
+          username: c.staff?.username || null,
+          staffNo: c.staff?.staffNo || null,
+          totalAmount: 0, totalTransactions: 0, customers: new Set()
+        });
+      }
+      const entry = staffMap.get(staffId)!;
+      entry.totalAmount += c.amount;
+      entry.totalTransactions += 1;
+      entry.customers.add(c.loan?.customerId);
+    });
+
+    const result = Array.from(staffMap.values()).map(s => ({
+      ...s, totalCustomers: s.customers.size, customers: undefined
+    }));
+
+    res.json(result.sort((a, b) => b.totalAmount - a.totalAmount));
+  } catch (error) {
+    console.error('Employee Report Error:', error);
+    res.status(500).json({ error: 'Failed to generate employee report' });
+  }
+};
+
+// 5. Area Wise Due Report
+export const getAreaDueReport = async (req: Request, res: Response) => {
+  try {
+    if (!(await ensureReportAccess(req, res))) return;
+    const { branchId, areaId } = req.query as Record<string, string>;
+
+    const user = (req as any).user;
+    const userBranchId = user?.branchId;
+
+    const loanWhere: any = { status: { in: LOAN_COLLECTIBLE_STATUSES } };
+    
+    if (res.locals.areaIds?.length) {
+      loanWhere.customer = { areaId: areaId ? areaId : { in: res.locals.areaIds } };
+    } else if (areaId) {
+      if (userBranchId) {
+        loanWhere.customer = { areaId, area: { branchId: userBranchId } };
+      } else {
+        loanWhere.customer = { areaId };
+      }
+    } else if (userBranchId) {
+      loanWhere.customer = { area: { branchId: userBranchId } };
+    } else if (branchId && branchId !== 'all') {
+      loanWhere.customer = { area: { branchId } };
+    }
+
+    const loans = await prisma.loan.findMany({
+      where: loanWhere,
+      include: {
+        customer: {
+          include: {
+            center: true,
+            area: { include: { branch: true } }
+          }
+        },
+        schedules: {
+          where: { status: { in: UNPAID_SCHEDULE_STATUSES }, dueDate: { lt: new Date() } }
+        }
+      }
+    });
+
+    // Group by area
+    const areaMap = new Map<string, any>();
+    loans.forEach(loan => {
+      const area = loan.customer?.area;
+      if (!area) return;
+      if (!areaMap.has(area.id)) {
+        areaMap.set(area.id, {
+          areaId: area.id, areaName: area.name,
+          branchName: area.branch?.name || '-',
+          totalLoans: 0, overdueLoans: 0,
+          totalOutstanding: 0, overdueAmount: 0
+        });
+      }
+      const entry = areaMap.get(area.id)!;
+      entry.totalLoans += 1;
+      entry.totalOutstanding += loan.outstandingAmount;
+      if (loan.schedules.length > 0) {
+        entry.overdueLoans += 1;
+        entry.overdueAmount += loan.schedules.reduce((sum: number, s: any) => sum + (s.emiAmount - s.amountPaid), 0);
+      }
+    });
+
+    res.json(Array.from(areaMap.values()).sort((a, b) => b.overdueAmount - a.overdueAmount));
+  } catch (error) {
+    console.error('Area Due Report Error:', error);
+    res.status(500).json({ error: 'Failed to generate area due report' });
+  }
+};
+
+// 6. Particular Party Amount Received Report
+export const getPartyAmountReport = async (req: Request, res: Response) => {
+  try {
+    if (!(await ensureReportAccess(req, res))) return;
+    const { customerId, loanId, loanNumber, customerNo, startDate, endDate, type } = req.query as Record<string, string>;
+    const user = (req as any).user;
+    const userBranchId = user?.branchId;
+
+    const loanSearch = loanId || loanNumber;
+    const customerSearch = customerId || customerNo;
+
+    if (!loanSearch && !customerSearch) {
+      return res.status(400).json({ error: 'Loan number or customer number is required' });
+    }
+
+    let resolvedLoanId: string | undefined;
+    if (loanSearch) {
+      const loan = await prisma.loan.findFirst({
+        where: {
+          OR: [{ id: loanSearch }, { loanNumber: loanSearch }],
+        },
+        select: { id: true },
+      });
+      if (!loan) return res.status(404).json({ error: `Loan not found: ${loanSearch}` });
+      resolvedLoanId = loan.id;
+    }
+
+    let resolvedCustomerId: string | undefined;
+    if (customerSearch) {
+      const customer = await prisma.customer.findFirst({
+        where: {
+          OR: [{ id: customerSearch }, { customerNo: customerSearch }],
+        },
+        select: { id: true },
+      });
+      if (!customer) return res.status(404).json({ error: `Customer not found: ${customerSearch}` });
+      resolvedCustomerId = customer.id;
+    }
+
+    const where: any = { isVoided: false, trnDate: buildDateWhere(startDate, endDate, type) };
+
+    if (res.locals.areaIds?.length) {
+      where.loan = {
+        customer: { areaId: { in: res.locals.areaIds } },
+        ...(resolvedCustomerId ? { customerId: resolvedCustomerId } : {}),
+      };
+      if (resolvedLoanId) where.loanId = resolvedLoanId;
+    } else if (userBranchId) {
+      where.loan = {
+        customer: { area: { branchId: userBranchId } },
+        ...(resolvedCustomerId ? { customerId: resolvedCustomerId } : {}),
+      };
+      if (resolvedLoanId) where.loanId = resolvedLoanId;
+    } else {
+      if (resolvedLoanId) where.loanId = resolvedLoanId;
+      if (resolvedCustomerId) where.loan = { customerId: resolvedCustomerId };
+    }
+
+    const collections = await prisma.collection.findMany({
+      where,
+      include: {
+        loan: {
+          include: {
+            customer: { select: { name: true, customerNo: true, phone: true } },
+            package: { select: { name: true } }
+          }
+        },
+        staff: { select: { name: true } }
+      },
+      orderBy: { trnDate: 'desc' }
+    });
+
+    res.json(collections);
+  } catch (error) {
+    console.error('Party Amount Report Error:', error);
+    res.status(500).json({ error: 'Failed to generate party amount report' });
+  }
+};

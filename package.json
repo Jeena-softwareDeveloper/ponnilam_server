@@ -1,0 +1,60 @@
+{
+  "name": "server",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "ts-node src/index.ts",
+    "build": "prisma generate && tsc",
+    "start": "node dist/index.js",
+    "test": "node --require ts-node/register --test src/utils/__tests__/loan.utils.test.ts src/utils/__tests__/api-crypto.test.ts src/utils/__tests__/sequence.utils.test.ts src/utils/__tests__/center-short-code.service.test.ts",
+    "db:push": "prisma db push",
+    "test:api": "ts-node scripts/full-api-test.ts",
+    "db:backfill": "ts-node prisma/backfill-required-fields.ts",
+    "db:reset": "prisma db push --force-reset && ts-node prisma/seed.ts",
+    "db:full-reset": "npm run db:reset && ts-node prisma/backfill-required-fields.ts && ts-node prisma/backfill-sequences.ts && ts-node scripts/seed/00-ClearLedgers.ts && ts-node scripts/seed/11-GenerateLedgers.ts && npm run db:renumber-customers && npm run db:renumber-loans && npm run db:assign-staff-nos && npm run db:backfill-shortcodes && npm run db:dedupe-collections",
+    "db:backfill-sequences": "ts-node prisma/backfill-sequences.ts",
+    "db:renumber-customers": "ts-node prisma/renumber-customer-nos.ts",
+    "db:renumber-customers:dry-run": "ts-node prisma/renumber-customer-nos.ts --dry-run",
+    "db:renumber-loans": "ts-node prisma/renumber-loan-nos.ts",
+    "db:renumber-loans:dry-run": "ts-node prisma/renumber-loan-nos.ts --dry-run",
+    "db:assign-staff-nos": "ts-node prisma/assign-staff-nos.ts",
+    "db:assign-staff-nos:dry-run": "ts-node prisma/assign-staff-nos.ts --dry-run",
+    "db:backfill-shortcodes": "ts-node prisma/backfill-center-shortcodes.ts",
+    "db:backfill-shortcodes:dry-run": "ts-node prisma/backfill-center-shortcodes.ts --dry-run",
+    "db:dedupe-collections": "ts-node prisma/dedupe-collections-migration.ts",
+    "db:dedupe-collections:dry-run": "ts-node prisma/dedupe-collections-migration.ts --dry-run",
+    "db:audit-migrate": "ts-node prisma/dedupe-collections-migration.ts && prisma db push && prisma generate && ts-node prisma/backfill-required-fields.ts && ts-node prisma/backfill-sequences.ts",
+    "postinstall": "prisma generate"
+  },
+  "prisma": {
+    "seed": "ts-node prisma/seed.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "@types/bcrypt": "^6.0.0",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^25.9.3",
+    "node-ssh": "^13.2.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^6.0.3"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.22.0",
+    "bcrypt": "^6.0.0",
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3",
+    "pg": "^8.21.0",
+    "prisma": "^5.22.0",
+    "ssh2": "^1.17.0"
+  }
+}
