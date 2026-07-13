@@ -6,6 +6,7 @@ import {
   buildScheduleRows,
   handleDroppedLoan,
   handleManualLoanClose,
+  incrementDueDate,
   isValidLoanTransition,
   resolveLastEmiAmount,
 } from '../../utils/loan.utils';
@@ -237,6 +238,33 @@ export const updateLoanStatus = asyncHandler(async (req: Request, res: Response)
             ),
           });
         }
+      } else if (req.body.sanctionDate || req.body.firstDueDate) {
+        const packageFrequency =
+          existingLoan.package?.frequency?.toUpperCase() ||
+          existingLoan.customer?.center?.repaymentType?.toUpperCase() ||
+          'WEEKLY';
+        const scheduleStart = req.body.firstDueDate
+          ? new Date(req.body.firstDueDate)
+          : new Date(req.body.sanctionDate);
+
+        await tx.loan.update({
+          where: { id: existingLoan.id },
+          data: { firstDueDate: scheduleStart },
+        });
+
+        const schedules = await tx.loanSchedule.findMany({
+          where: { loanId: existingLoan.id },
+          orderBy: { dueDate: 'asc' },
+        });
+
+        let currentDate = new Date(scheduleStart);
+        for (let i = 0; i < schedules.length; i++) {
+          await tx.loanSchedule.update({
+            where: { id: schedules[i].id },
+            data: { dueDate: new Date(currentDate) },
+          });
+          currentDate = incrementDueDate(currentDate, packageFrequency);
+        }
       }
     }
 
@@ -460,6 +488,28 @@ export const updateLoanFinancial = asyncHandler(async (req: Request, res: Respon
               lastEmi
             ),
           });
+        }
+      } else if (firstDueDate || sanctionDate) {
+        const packageFrequency =
+          existingLoan.package?.frequency?.toUpperCase() ||
+          existingLoan.customer?.center?.repaymentType?.toUpperCase() ||
+          'WEEKLY';
+        const scheduleStart = firstDueDate
+          ? new Date(firstDueDate)
+          : new Date(sanctionDate);
+
+        const schedules = await tx.loanSchedule.findMany({
+          where: { loanId: existingLoan.id },
+          orderBy: { dueDate: 'asc' },
+        });
+
+        let currentDate = new Date(scheduleStart);
+        for (let i = 0; i < schedules.length; i++) {
+          await tx.loanSchedule.update({
+            where: { id: schedules[i].id },
+            data: { dueDate: new Date(currentDate) },
+          });
+          currentDate = incrementDueDate(currentDate, packageFrequency);
         }
       }
     }

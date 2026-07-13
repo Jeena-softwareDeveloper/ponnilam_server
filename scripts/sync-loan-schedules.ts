@@ -1,13 +1,17 @@
 import 'dotenv/config';
 import prisma from '../src/utils/prisma';
 import { ScheduleStatus, LoanStatus } from '../src/utils/prisma-enums';
-import { buildScheduleRows, resolveLastEmiAmount } from '../src/utils/loan.utils';
+import { incrementDueDate } from '../src/utils/loan.utils';
 
 /**
  * sync-loan-schedules.ts
  *
  * Synchronizes LoanSchedule due dates and firstDueDate with sanctionDate (Loan Start Date)
- * for all loans that have NOT had any collections (0 paid schedules).
+ * for all approved or active loans.
+ *
+ * Safe for loans with existing collections (Paid EMIs):
+ * Instead of deleting and recreating rows (which would destroy paid statuses),
+ * this updates the `dueDate` of existing LoanSchedule rows in-place.
  *
  * Usage:
  *   npx ts-node scripts/sync-loan-schedules.ts
@@ -22,28 +26,21 @@ async function syncLoanSchedules() {
     include: {
       package: true,
       customer: { include: { center: true } },
-      schedules: true,
+      schedules: {
+        orderBy: { dueDate: 'asc' },
+      },
     },
   });
 
   let syncedCount = 0;
 
   for (const loan of loans) {
-    // Check if any schedule has been paid or partially paid
-    const hasPaidSchedules = loan.schedules.some(
-      (s) => s.status !== ScheduleStatus.PENDING || (s.amountPaid && s.amountPaid > 0)
-    );
-    if (hasPaidSchedules) {
-      continue; // Skip loans that already have collection activity
-    }
-
     const sanctionDate = loan.sanctionDate || loan.createdAt;
     if (!sanctionDate) continue;
 
     const currentFirstDueStr = loan.firstDueDate ? loan.firstDueDate.toISOString().slice(0, 10) : '';
     const sanctionStr = sanctionDate.toISOString().slice(0, 10);
 
-    // If firstDueDate does not exactly match sanctionDate (Loan Start Date), or if schedules start on a different date
     const firstScheduleDueStr = loan.schedules.length > 0 && loan.schedules[0].dueDate
       ? loan.schedules[0].dueDate.toISOString().slice(0, 10)
       : '';
@@ -57,9 +54,6 @@ async function syncLoanSchedules() {
         loan.package?.frequency?.toUpperCase() ||
         loan.customer?.center?.repaymentType?.toUpperCase() ||
         'WEEKLY';
-      const noOfDues = loan.noOfDues || 28;
-      const perDueAmount = loan.perDueAmount || 0;
-      const lastEmi = resolveLastEmiAmount(loan.totalDueAmount || 0, perDueAmount, noOfDues);
 
       await prisma.$transaction(async (tx) => {
         // 1. Update loan firstDueDate to match sanctionDate
@@ -68,24 +62,19 @@ async function syncLoanSchedules() {
           data: { firstDueDate: new Date(sanctionDate) },
         });
 
-        // 2. Rebuild schedule rows from sanctionDate
-        await tx.loanSchedule.deleteMany({ where: { loanId: loan.id } });
-        if (noOfDues > 0 && perDueAmount > 0) {
-          await tx.loanSchedule.createMany({
-            data: buildScheduleRows(
-              loan.id,
-              noOfDues,
-              perDueAmount,
-              new Date(sanctionDate),
-              packageFrequency,
-              lastEmi
-            ),
+        // 2. Update each schedule row's dueDate in place without modifying status, amountPaid, or collections
+        let currentDate = new Date(sanctionDate);
+        for (let i = 0; i < loan.schedules.length; i++) {
+          await tx.loanSchedule.update({
+            where: { id: loan.schedules[i].id },
+            data: { dueDate: new Date(currentDate) },
           });
+          currentDate = incrementDueDate(currentDate, packageFrequency);
         }
       });
 
       syncedCount++;
-      console.log(`  ✔ Successfully resynced ${noOfDues} EMI schedules starting on ${sanctionStr}.\n`);
+      console.log(`  ✔ Successfully resynced ${loan.schedules.length} EMI schedule dates starting on ${sanctionStr}.\n`);
     }
   }
 
