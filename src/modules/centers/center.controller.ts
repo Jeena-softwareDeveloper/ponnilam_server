@@ -51,7 +51,7 @@ export const getCenters = async (req: Request, res: Response): Promise<any> => {
         customers: {
           include: {
             loans: {
-              select: { status: true }
+              select: { status: true, firstDueDate: true, sanctionDate: true, createdAt: true }
             }
           }
         }
@@ -75,18 +75,33 @@ export const getCenters = async (req: Request, res: Response): Promise<any> => {
       centers = await prisma.center.findMany(queryArgs);
     }
 
+    const dayNames = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+
     const enrichedCenters = centers.map(center => {
       let activeLoansCount = 0;
       let pendingSetupCount = 0;
+      let earliestEmiDate: any = null;
 
       center.customers.forEach(customer => {
         const hasOpenLoan = customer.loans.some(l => LOAN_COLLECTIBLE_STATUSES.includes(l.status as typeof LOAN_COLLECTIBLE_STATUSES[number]));
         if (hasOpenLoan) {
           activeLoansCount++;
+          customer.loans.forEach(l => {
+            if (LOAN_COLLECTIBLE_STATUSES.includes(l.status as typeof LOAN_COLLECTIBLE_STATUSES[number])) {
+              const d = l.firstDueDate ? new Date(l.firstDueDate) : l.sanctionDate ? new Date(l.sanctionDate) : new Date(l.createdAt);
+              if (!earliestEmiDate || d < earliestEmiDate) {
+                earliestEmiDate = d;
+              }
+            }
+          });
         } else if (!customer.loans.some(l => l.status === LoanStatus.PENDING)) {
           pendingSetupCount++;
         }
       });
+
+      const firstEmiDateStr = earliestEmiDate ? earliestEmiDate.toISOString().slice(0, 10) : null;
+      const emiDayName = earliestEmiDate ? dayNames[earliestEmiDate.getDay()] : null;
+      const emiDayOfWeek = earliestEmiDate ? earliestEmiDate.getDay() : null;
 
       // Remove the large customers array to keep the payload small
       const { customers, ...rest } = center;
@@ -94,6 +109,9 @@ export const getCenters = async (req: Request, res: Response): Promise<any> => {
         ...rest,
         activeLoansCount,
         pendingSetupCount,
+        firstEmiDate: firstEmiDateStr,
+        emiDayName,
+        emiDayOfWeek,
         mappedCustomersCount: customers.filter((c) => c.centerMemberType !== 'IMPORT').length,
         importCustomersCount: customers.filter((c) => c.centerMemberType === 'IMPORT').length,
       };
@@ -120,7 +138,7 @@ export const getCenterById = async (req: Request, res: Response): Promise<any> =
         customers: {
           include: {
             loans: {
-              select: { status: true, outstandingAmount: true }
+              select: { status: true, outstandingAmount: true, firstDueDate: true, sanctionDate: true, createdAt: true }
             }
           }
         }
@@ -139,16 +157,30 @@ export const getCenterById = async (req: Request, res: Response): Promise<any> =
     let activeLoansCount = 0;
     let pendingSetupCount = 0;
     let totalOutstandingAmount = 0;
+    let earliestEmiDate: any = null;
+    const dayNames = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 
     center.customers.forEach(customer => {
       const openLoans = customer.loans.filter(l => LOAN_COLLECTIBLE_STATUSES.includes(l.status as typeof LOAN_COLLECTIBLE_STATUSES[number]));
       if (openLoans.length > 0) {
         activeLoansCount++;
         totalOutstandingAmount += openLoans.reduce((sum, l) => sum + (l.outstandingAmount || 0), 0);
+        customer.loans.forEach(l => {
+          if (LOAN_COLLECTIBLE_STATUSES.includes(l.status as typeof LOAN_COLLECTIBLE_STATUSES[number])) {
+            const d = l.firstDueDate ? new Date(l.firstDueDate) : l.sanctionDate ? new Date(l.sanctionDate) : new Date(l.createdAt);
+            if (!earliestEmiDate || d < earliestEmiDate) {
+              earliestEmiDate = d;
+            }
+          }
+        });
       } else if (!customer.loans.some(l => l.status === LoanStatus.PENDING)) {
         pendingSetupCount++;
       }
     });
+
+    const firstEmiDateStr = earliestEmiDate ? earliestEmiDate.toISOString().slice(0, 10) : null;
+    const emiDayName = earliestEmiDate ? dayNames[earliestEmiDate.getDay()] : null;
+    const emiDayOfWeek = earliestEmiDate ? earliestEmiDate.getDay() : null;
 
     const { customers, ...rest } = center;
 
@@ -158,6 +190,9 @@ export const getCenterById = async (req: Request, res: Response): Promise<any> =
       activeLoansCount,
       pendingSetupCount,
       totalOutstandingAmount,
+      firstEmiDate: firstEmiDateStr,
+      emiDayName,
+      emiDayOfWeek,
       totalMembers: customers.filter((c) => c.centerMemberType !== 'IMPORT').length,
       importCustomersCount: customers.filter((c) => c.centerMemberType === 'IMPORT').length,
     });
