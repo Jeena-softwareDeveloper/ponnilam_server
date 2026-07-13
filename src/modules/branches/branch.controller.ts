@@ -8,27 +8,41 @@ import { denyUnlessMenuPermission } from '../../utils/master-permissions';
 import { nextStaffNo } from '../../utils/sequence.utils';
 
 const MENU_PATH = '/admin/masters/branches';
+import { parsePagination, paginatedResponse } from '../../utils/pagination.utils';
 
 export const getBranches = async (req: Request, res: Response): Promise<any> => {
   try {
     const user = (req as any).user;
+    const { paginate } = req.query;
     const where: any = {};
     if (user?.role?.name !== 'Admin' && user?.branchId) {
       where.id = user.branchId;
     }
 
-    const branches = await prisma.branch.findMany({
-      where: Object.keys(where).length ? where : undefined,
-      orderBy: { code: 'asc' },
+    const finalWhere = Object.keys(where).length ? where : undefined;
+    const queryArgs = {
+      where: finalWhere,
+      orderBy: { code: 'asc' } as any,
       include: { 
         state: true, 
         district: true,
         staffs: {
-          orderBy: { createdAt: 'asc' },
+          orderBy: { createdAt: 'asc' } as any,
           take: 1
         }
       },
-    });
+    };
+
+    if (paginate === 'true') {
+      const { page, limit, skip } = parsePagination(req.query as Record<string, string>);
+      const [branches, total] = await prisma.$transaction([
+        prisma.branch.findMany({ ...queryArgs, skip, take: limit }),
+        prisma.branch.count({ where: finalWhere }),
+      ]);
+      return res.status(200).json(paginatedResponse(branches, total, page, limit));
+    }
+
+    const branches = await prisma.branch.findMany(queryArgs);
     return res.status(200).json(branches);
   } catch (error) {
     console.error('Error fetching branches:', error);

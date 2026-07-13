@@ -3,13 +3,27 @@ import prisma from '../../utils/prisma';
 import { denyUnlessMenuPermission } from '../../utils/master-permissions';
 
 const MENU_PATH = '/admin/masters/roles';
+import { parsePagination, paginatedResponse } from '../../utils/pagination.utils';
 
 export const getRoles = async (req: Request, res: Response): Promise<any> => {
   try {
-    const roles = await prisma.role.findMany({ 
-      where: { name: { not: 'Admin' } },
-      orderBy: { name: 'asc' } 
-    });
+    const { paginate } = req.query;
+    const where = { name: { not: 'Admin' } };
+    const queryArgs = {
+      where,
+      orderBy: { name: 'asc' } as any,
+    };
+
+    if (paginate === 'true') {
+      const { page, limit, skip } = parsePagination(req.query as Record<string, string>);
+      const [roles, total] = await prisma.$transaction([
+        prisma.role.findMany({ ...queryArgs, skip, take: limit }),
+        prisma.role.count({ where }),
+      ]);
+      return res.status(200).json(paginatedResponse(roles, total, page, limit));
+    }
+
+    const roles = await prisma.role.findMany(queryArgs);
     return res.status(200).json(roles);
   } catch (error) {
     console.error('Error fetching roles:', error);

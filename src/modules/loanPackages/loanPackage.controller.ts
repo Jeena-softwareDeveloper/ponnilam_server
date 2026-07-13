@@ -4,10 +4,25 @@ import { validateLoanPackageFields } from '../../utils/validation.helpers';
 import { denyUnlessMenuPermission } from '../../utils/master-permissions';
 
 const MENU_PATH = '/admin/masters/loan-packages';
+import { parsePagination, paginatedResponse } from '../../utils/pagination.utils';
 
 export const getLoanPackages = async (req: Request, res: Response): Promise<any> => {
   try {
-    const packages = await prisma.loanPackage.findMany({ orderBy: { name: 'asc' } });
+    const { paginate } = req.query;
+    const queryArgs = {
+      orderBy: { name: 'asc' } as any,
+    };
+
+    if (paginate === 'true') {
+      const { page, limit, skip } = parsePagination(req.query as Record<string, string>);
+      const [packages, total] = await prisma.$transaction([
+        prisma.loanPackage.findMany({ ...queryArgs, skip, take: limit }),
+        prisma.loanPackage.count(),
+      ]);
+      return res.status(200).json(paginatedResponse(packages, total, page, limit));
+    }
+
+    const packages = await prisma.loanPackage.findMany(queryArgs);
     return res.status(200).json(packages);
   } catch (error) {
     console.error('Error fetching loan packages:', error);

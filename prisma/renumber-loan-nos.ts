@@ -91,8 +91,10 @@ async function main() {
     groupRows.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
     const branchPrefix = loanPrefixFromBranchName(groupRows[0].branchName);
     const label = groupRows[0].branchName || branchPrefix;
-    groupRows.forEach((row, index) => {
-      const target = formatLoanNo(branchPrefix, index + 1);
+    groupRows.forEach((row) => {
+      const current = (prefixMax.get(branchPrefix) ?? 0) + 1;
+      prefixMax.set(branchPrefix, current);
+      const target = formatLoanNo(branchPrefix, current);
       if (row.loanNumber !== target) {
         changes.push({
           id: row.id,
@@ -102,7 +104,6 @@ async function main() {
         });
       }
     });
-    prefixMax.set(branchPrefix, Math.max(prefixMax.get(branchPrefix) ?? 0, groupRows.length));
   }
 
   if (!changes.length) {

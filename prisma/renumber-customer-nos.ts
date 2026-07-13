@@ -95,8 +95,10 @@ async function main() {
   for (const [, groupRows] of byGroup) {
     groupRows.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
     const prefix = resolvePrefix(groupRows[0]);
-    groupRows.forEach((row, index) => {
-      const target = formatNo(prefix, index + 1);
+    groupRows.forEach((row) => {
+      const current = (prefixMax.get(prefix) ?? 0) + 1;
+      prefixMax.set(prefix, current);
+      const target = formatNo(prefix, current);
       if (row.customerNo !== target) {
         changes.push({
           id: row.id,
@@ -107,7 +109,6 @@ async function main() {
         });
       }
     });
-    prefixMax.set(prefix, Math.max(prefixMax.get(prefix) ?? 0, groupRows.length));
   }
 
   if (!changes.length) {
@@ -126,12 +127,15 @@ async function main() {
   }
 
   await prisma.$transaction(async (tx) => {
+    // Pass 1: apply temp numbers to avoid unique constraint conflicts
     for (const ch of changes) {
       await tx.customer.update({
         where: { id: ch.id },
-        data: { customerNo: `REN-${ch.id}` },
+        data: { customerNo: ch.id },
       });
     }
+
+    // Pass 2: apply final target numbers
     for (const ch of changes) {
       await tx.customer.update({
         where: { id: ch.id },

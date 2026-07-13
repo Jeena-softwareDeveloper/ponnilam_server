@@ -3,6 +3,8 @@ import { Request, Response } from 'express';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { getDateRangeBounds, getDayRange } from '../../utils/date.utils';
 
+import { parsePagination, paginatedResponse } from '../../utils/pagination.utils';
+
 // GET /api/v1/audit-logs - full audit history
 export const getAuditLogs = asyncHandler(async (req: Request, res: Response) => {
   const {
@@ -11,9 +13,9 @@ export const getAuditLogs = asyncHandler(async (req: Request, res: Response) => 
     entity,
     startDate,
     endDate,
-    page = '1',
-    limit = '100',
   } = req.query as Record<string, string>;
+
+  const { page, limit, skip } = parsePagination(req.query as Record<string, string>);
 
   const where: any = {};
 
@@ -28,10 +30,6 @@ export const getAuditLogs = asyncHandler(async (req: Request, res: Response) => 
   if (startDate || endDate) {
     where.createdAt = getDateRangeBounds(startDate, endDate);
   }
-
-  const pageNum = parseInt(page) || 1;
-  const limitNum = parseInt(limit) || 100;
-  const skip = (pageNum - 1) * limitNum;
 
   const [logs, total] = await Promise.all([
     prisma.auditLog.findMany({
@@ -50,12 +48,12 @@ export const getAuditLogs = asyncHandler(async (req: Request, res: Response) => 
       },
       orderBy: { createdAt: 'desc' },
       skip,
-      take: limitNum,
+      take: limit,
     }),
     prisma.auditLog.count({ where })
   ]);
 
-  return res.status(200).json({ logs, total, page: pageNum, limit: limitNum });
+  return res.status(200).json(paginatedResponse(logs, total, page, limit));
 });
 
 // GET /api/v1/audit-logs/active-sessions - who logged in today and hasn't logged out

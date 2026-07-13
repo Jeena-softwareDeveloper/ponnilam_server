@@ -1,17 +1,35 @@
 import { Request, Response } from 'express';
 import prisma from '../../utils/prisma';
 import { denyUnlessMenuPermission } from '../../utils/master-permissions';
+import { parsePagination, paginatedResponse } from '../../utils/pagination.utils';
 
 const MENU_PATH = '/admin/masters/areas';
 
 export const getAreas = async (req: Request, res: Response): Promise<any> => {
   try {
-    const { branchId } = req.query;
+    const { branchId, paginate } = req.query;
     const user = (req as any).user;
     const activeBranchId = user?.branchId || branchId;
 
+    const where = activeBranchId ? { branchId: String(activeBranchId) } : undefined;
+
+    if (paginate === 'true') {
+      const { page, limit, skip } = parsePagination(req.query as Record<string, string>);
+      const [areas, total] = await prisma.$transaction([
+        prisma.area.findMany({
+          where,
+          include: { branch: true },
+          orderBy: { name: 'asc' },
+          skip,
+          take: limit,
+        }),
+        prisma.area.count({ where }),
+      ]);
+      return res.status(200).json(paginatedResponse(areas, total, page, limit));
+    }
+
     const areas = await prisma.area.findMany({
-      where: activeBranchId ? { branchId: String(activeBranchId) } : undefined,
+      where,
       include: { branch: true },
       orderBy: { name: 'asc' },
     });

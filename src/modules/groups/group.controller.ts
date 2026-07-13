@@ -33,9 +33,11 @@ function handleError(res: Response, error: any) {
   return res.status(500).json({ error: 'Internal server error' });
 }
 
+import { parsePagination, paginatedResponse } from '../../utils/pagination.utils';
+
 export const getGroups = async (req: Request, res: Response): Promise<any> => {
   try {
-    const { centerId, branchId } = req.query;
+    const { centerId, branchId, paginate } = req.query;
     const whereClause: any = {};
 
     if (centerId) {
@@ -48,11 +50,22 @@ export const getGroups = async (req: Request, res: Response): Promise<any> => {
       whereClause.center = { ...whereClause.center, areaId: { in: res.locals.areaIds } };
     }
 
-    const groups = await prisma.group.findMany({
+    const queryArgs = {
       where: whereClause,
       include: { center: true, _count: { select: { customers: true } } },
-      orderBy: { groupName: 'asc' },
-    });
+      orderBy: { groupName: 'asc' } as any,
+    };
+
+    if (paginate === 'true') {
+      const { page, limit, skip } = parsePagination(req.query as Record<string, string>);
+      const [groups, total] = await prisma.$transaction([
+        prisma.group.findMany({ ...queryArgs, skip, take: limit }),
+        prisma.group.count({ where: whereClause })
+      ]);
+      return res.status(200).json(paginatedResponse(groups, total, page, limit));
+    }
+
+    const groups = await prisma.group.findMany(queryArgs);
     return res.status(200).json(groups);
   } catch (error) {
     return handleError(res, error);

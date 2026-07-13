@@ -3,12 +3,25 @@ import prisma from '../../utils/prisma';
 import { denyUnlessMenuPermission } from '../../utils/master-permissions';
 
 const MENU_PATH = '/admin/masters/states';
+import { parsePagination, paginatedResponse } from '../../utils/pagination.utils';
 
 export const getStates = async (req: Request, res: Response): Promise<any> => {
   try {
-    const states = await prisma.state.findMany({
-      orderBy: { name: 'asc' },
-    });
+    const { paginate } = req.query;
+    const queryArgs = {
+      orderBy: { name: 'asc' } as any,
+    };
+
+    if (paginate === 'true') {
+      const { page, limit, skip } = parsePagination(req.query as Record<string, string>);
+      const [states, total] = await prisma.$transaction([
+        prisma.state.findMany({ ...queryArgs, skip, take: limit }),
+        prisma.state.count(),
+      ]);
+      return res.status(200).json(paginatedResponse(states, total, page, limit));
+    }
+
+    const states = await prisma.state.findMany(queryArgs);
     return res.status(200).json(states);
   } catch (error) {
     console.error('Error fetching states:', error);

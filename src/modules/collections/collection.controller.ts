@@ -109,7 +109,7 @@ export const getCollections = asyncHandler(async (req: Request, res: Response) =
 
   const { page, limit, skip } = parsePagination(req.query as Record<string, string>);
 
-  const [collections, total] = await Promise.all([
+  const [collections, total, summaryRows] = await Promise.all([
     prisma.collection.findMany({
       where,
       include: {
@@ -126,9 +126,19 @@ export const getCollections = asyncHandler(async (req: Request, res: Response) =
       take: limit,
     }),
     prisma.collection.count({ where }),
+    prisma.collection.findMany({
+      where,
+      select: { amount: true, loan: { select: { perDueAmount: true } } }
+    })
   ]);
 
-  res.json(paginatedResponse(collections, total, page, limit));
+  const collected = summaryRows.reduce((a, c) => a + (c.amount || 0), 0);
+  const expected = summaryRows.reduce((a, c) => a + (c.loan?.perDueAmount || 0), 0);
+
+  const response = paginatedResponse(collections, total, page, limit) as any;
+  response.summary = { count: total, collected, expected };
+
+  res.json(response);
 });
 
 export const voidCollectionEntry = asyncHandler(async (req: Request, res: Response) => {

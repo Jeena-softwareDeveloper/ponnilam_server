@@ -1,5 +1,6 @@
 import prisma from '../../utils/prisma';
 import { Request, Response } from 'express';
+import { parsePagination, paginatedResponse } from '../../utils/pagination.utils';
 import bcrypt from 'bcryptjs';
 import { generateTemporaryPassword } from '../../utils/auth.utils';
 import { isAdminUser } from '../../utils/user.utils';
@@ -115,11 +116,27 @@ export const getStaffs = async (req: Request, res: Response): Promise<any> => {
       ];
     }
 
-    const staffs = await prisma.staff.findMany({
-      where: Object.keys(whereClause).length > 0 ? whereClause : undefined,
+    const finalWhere = Object.keys(whereClause).length > 0 ? whereClause : undefined;
+    const queryArgs = {
+      where: finalWhere,
       include: { area: true, role: true, branch: true },
-      orderBy: { name: 'asc' },
-    });
+      orderBy: { name: 'asc' } as any,
+    };
+
+    const { paginate } = req.query;
+    if (paginate === 'true') {
+      const { page, limit, skip } = parsePagination(req.query as Record<string, string>);
+      const [staffs, total] = await prisma.$transaction([
+        prisma.staff.findMany({ ...queryArgs, skip, take: limit }),
+        prisma.staff.count({ where: finalWhere }),
+      ]);
+      const filteredStaffs = staffs
+        .filter((s) => s.username !== 'admin' && s.role?.name !== 'Admin')
+        .map(withoutPassword);
+      return res.status(200).json(paginatedResponse(filteredStaffs, total, page, limit));
+    }
+
+    const staffs = await prisma.staff.findMany(queryArgs);
 
     const filteredStaffs = staffs
       .filter((s) => s.username !== 'admin' && s.role?.name !== 'Admin')

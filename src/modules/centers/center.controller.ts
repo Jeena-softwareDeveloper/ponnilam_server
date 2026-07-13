@@ -19,10 +19,11 @@ import { generateCenterCodeInTx } from '../../utils/center-code.utils';
 import { allocateCenterShortCode } from '../../utils/center-short-code.service';
 
 const MENU_PATH = '/admin/masters/centers';
+import { parsePagination, paginatedResponse } from '../../utils/pagination.utils';
 
 export const getCenters = async (req: Request, res: Response): Promise<any> => {
   try {
-    const { branchId, staffId } = req.query;
+    const { branchId, staffId, paginate } = req.query;
     const user = (req as any).user;
     const userBranchId = user?.branchId;
     
@@ -38,7 +39,11 @@ export const getCenters = async (req: Request, res: Response): Promise<any> => {
       whereClause.employeeId = String(staffId);
     }
     
-    const centers = await prisma.center.findMany({
+    let centers;
+    let total = 0;
+    let page = 1, limit = 20;
+
+    const queryArgs = {
       where: whereClause,
       include: { 
         employee: true, 
@@ -51,8 +56,24 @@ export const getCenters = async (req: Request, res: Response): Promise<any> => {
           }
         }
       },
-      orderBy: { name: 'asc' },
-    });
+      orderBy: { name: 'asc' } as any,
+    };
+
+    if (paginate === 'true') {
+      const parsed = parsePagination(req.query as Record<string, string>);
+      page = parsed.page;
+      limit = parsed.limit;
+      const skip = parsed.skip;
+      
+      const [fetchedCenters, totalCount] = await prisma.$transaction([
+        prisma.center.findMany({ ...queryArgs, skip, take: limit }),
+        prisma.center.count({ where: whereClause })
+      ]);
+      centers = fetchedCenters;
+      total = totalCount;
+    } else {
+      centers = await prisma.center.findMany(queryArgs);
+    }
 
     const enrichedCenters = centers.map(center => {
       let activeLoansCount = 0;
@@ -78,6 +99,9 @@ export const getCenters = async (req: Request, res: Response): Promise<any> => {
       };
     });
 
+    if (paginate === 'true') {
+      return res.status(200).json(paginatedResponse(enrichedCenters, total, page, limit));
+    }
     return res.status(200).json(enrichedCenters);
   } catch (error) {
     console.error('Error fetching centers:', error);

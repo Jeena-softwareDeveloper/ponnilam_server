@@ -8,3 +8,11 @@ dist/
 coverage/
 logs/
 *.log
+
+# Database files
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+*.mdb
+*.sql

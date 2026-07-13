@@ -3,15 +3,28 @@ import prisma from '../../utils/prisma';
 import { denyUnlessMenuPermission } from '../../utils/master-permissions';
 
 const MENU_PATH = '/admin/masters/districts';
+import { parsePagination, paginatedResponse } from '../../utils/pagination.utils';
 
 export const getDistricts = async (req: Request, res: Response): Promise<any> => {
   try {
-    const { stateId } = req.query;
-    const districts = await prisma.district.findMany({
-      where: stateId ? { stateId: String(stateId) } : undefined,
+    const { stateId, paginate } = req.query;
+    const where = stateId ? { stateId: String(stateId) } : undefined;
+    const queryArgs = {
+      where,
       include: { state: true },
-      orderBy: { name: 'asc' },
-    });
+      orderBy: { name: 'asc' } as any,
+    };
+
+    if (paginate === 'true') {
+      const { page, limit, skip } = parsePagination(req.query as Record<string, string>);
+      const [districts, total] = await prisma.$transaction([
+        prisma.district.findMany({ ...queryArgs, skip, take: limit }),
+        prisma.district.count({ where }),
+      ]);
+      return res.status(200).json(paginatedResponse(districts, total, page, limit));
+    }
+
+    const districts = await prisma.district.findMany(queryArgs);
     return res.status(200).json(districts);
   } catch (error) {
     console.error('Error fetching districts:', error);
