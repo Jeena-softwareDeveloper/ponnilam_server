@@ -58,7 +58,13 @@ async function fixFuturePaidSchedules() {
       const amountToRevert = schedule.amountPaid || 0;
 
       await prisma.$transaction(async (tx) => {
-        // 1. Revert schedule back to PENDING
+        // 1. Revert schedule back to PENDING and void collection if present
+        if (schedule.collectionId) {
+          await tx.collection.updateMany({
+            where: { id: schedule.collectionId },
+            data: { isVoided: true, voidReason: 'Reverted by fix-future-paid-schedules script' },
+          });
+        }
         await tx.loanSchedule.update({
           where: { id: schedule.id },
           data: {
