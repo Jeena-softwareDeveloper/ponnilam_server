@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import prisma from '../src/utils/prisma';
 import { ScheduleStatus, UNPAID_SCHEDULE_STATUSES } from '../src/utils/prisma-enums';
 import { toCollectionDay } from '../src/utils/date.utils';
