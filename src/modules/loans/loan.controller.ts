@@ -401,7 +401,7 @@ export const updateLoanFinancial = asyncHandler(async (req: Request, res: Respon
   const { id } = req.params;
   const {
     amount, noOfDues, perDueAmount, totalDueAmount, deductionAmount, netDisbursement,
-    firstDueDate, remarks,
+    firstDueDate, sanctionDate, disbursementDate, remarks,
   } = req.body;
 
   const existingLoan = await prisma.loan.findUnique({
@@ -459,6 +459,8 @@ export const updateLoanFinancial = asyncHandler(async (req: Request, res: Respon
         netDisbursement: net,
         outstandingAmount: totalDue,
         ...(firstDueDate && { firstDueDate: new Date(firstDueDate) }),
+        ...(sanctionDate && { sanctionDate: new Date(sanctionDate) }),
+        ...(disbursementDate && { disbursementDate: new Date(disbursementDate) }),
         ...(remarks !== undefined && { remarks }),
       },
     });
