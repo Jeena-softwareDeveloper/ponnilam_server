@@ -27,8 +27,12 @@ export async function allocateCollection(
   collectionId: string
 ) {
   let remaining = poolAmount;
+  const targetDay = toCollectionDay(trnDate);
   for (const schedule of schedules) {
     if (remaining <= 0) break;
+    if (toCollectionDay(schedule.dueDate) > targetDay) {
+      break;
+    }
     const due = schedule.emiAmount - (schedule.amountPaid || 0);
     if (due <= 0) continue;
 
@@ -167,7 +171,7 @@ export async function processLoanCollection(
   const leftover = await allocateCollection(tx, loan.id, loan.schedules, pool, normalizedTrnDate, collection.id);
 
   const newScheduleOutstanding = await sumUnpaidScheduleAmount(tx, loan.id);
-  let newOutstanding = newScheduleOutstanding;
+  let newOutstanding = Math.max(0, newScheduleOutstanding - leftover);
   let newAdvanceBalance = leftover;
 
   let newStatus = loan.status;

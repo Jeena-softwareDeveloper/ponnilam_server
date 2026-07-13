@@ -130,7 +130,8 @@ export type ScheduleAllocRow = ScheduleAmountRow & { id: string };
 /** Pure FIFO allocation for unit tests (mirrors collection.utils allocateCollection). */
 export function allocateCollectionPool(
   schedules: ScheduleAllocRow[],
-  poolAmount: number
+  poolAmount: number,
+  targetDay?: string
 ): { schedules: ScheduleAllocRow[]; leftover: number } {
   let remaining = poolAmount;
   const updated = schedules.map((s) => ({ ...s, amountPaid: s.amountPaid || 0 }));
@@ -138,6 +139,9 @@ export function allocateCollectionPool(
   for (const schedule of updated) {
     if (remaining <= 0) break;
     if (!UNPAID_SCHEDULE_STATUSES.includes(schedule.status as ScheduleStatus)) continue;
+    if (targetDay && (schedule as any).dueDate && toCollectionDay((schedule as any).dueDate) > targetDay) {
+      break;
+    }
     const due = schedule.emiAmount - schedule.amountPaid;
     if (due <= 0) continue;
 

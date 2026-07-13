@@ -129,6 +129,19 @@ describe('allocateCollectionPool', () => {
     assert.equal(leftover, 0);
     assert.equal(sumUnpaidFromSchedules(updated), 600);
   });
+
+  it('TC-COL-04: does not allocate pool to future due dates when targetDay is provided', () => {
+    const schedules = [
+      { id: '1', emiAmount: 650, amountPaid: 0, status: ScheduleStatus.PENDING, dueDate: '2026-07-13' },
+      { id: '2', emiAmount: 650, amountPaid: 0, status: ScheduleStatus.PENDING, dueDate: '2026-07-20' },
+    ];
+    // Pool amount is 1300, but target day is 2026-07-13.
+    // Only schedule #1 (due 2026-07-13) should be paid, and remaining 650 should be leftover as advance balance.
+    const { schedules: updated, leftover } = allocateCollectionPool(schedules, 1300, '2026-07-13');
+    assert.equal(updated[0].status, ScheduleStatus.PAID);
+    assert.equal(updated[1].status, ScheduleStatus.PENDING);
+    assert.equal(leftover, 650);
+  });
 });
 
 describe('resolveLastEmiAmount', () => {
