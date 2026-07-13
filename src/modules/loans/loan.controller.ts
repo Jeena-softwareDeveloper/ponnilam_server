@@ -9,7 +9,7 @@ import {
   isValidLoanTransition,
   resolveLastEmiAmount,
 } from '../../utils/loan.utils';
-import { LoanStatus, OPEN_LOAN_STATUSES } from '../../utils/prisma-enums';
+import { LoanStatus, OPEN_LOAN_STATUSES, ScheduleStatus } from '../../utils/prisma-enums';
 import { nextLoanNumber } from '../../utils/sequence.utils';
 import { parsePagination, paginatedResponse } from '../../utils/pagination.utils';
 import { assertMenuPermission, checkAreaScope, resolveStaffId } from '../../utils/validation.helpers';
@@ -200,33 +200,47 @@ export const updateLoanStatus = asyncHandler(async (req: Request, res: Response)
       );
     }
 
-    if (status === LoanStatus.APPROVED && existingLoan.status !== LoanStatus.APPROVED) {
-      const packageFrequency =
-        existingLoan.package?.frequency?.toUpperCase() ||
-        existingLoan.customer?.center?.repaymentType?.toUpperCase() ||
-        'WEEKLY';
-      const scheduleStart = existingLoan.firstDueDate
-        ? new Date(existingLoan.firstDueDate)
-        : sanctionDate
-          ? new Date(sanctionDate)
-          : new Date(updatedLoan.sanctionDate || updatedLoan.createdAt);
+    if ((status === LoanStatus.APPROVED || status === LoanStatus.ACTIVE) && (existingLoan.status !== LoanStatus.ACTIVE || req.body.sanctionDate || req.body.firstDueDate)) {
+      const paidScheduleCount = await tx.loanSchedule.count({
+        where: { loanId: existingLoan.id, status: { not: ScheduleStatus.PENDING } }
+      });
+      if (paidScheduleCount === 0) {
+        const packageFrequency =
+          existingLoan.package?.frequency?.toUpperCase() ||
+          existingLoan.customer?.center?.repaymentType?.toUpperCase() ||
+          'WEEKLY';
+        const scheduleStart = req.body.firstDueDate
+          ? new Date(req.body.firstDueDate)
+          : req.body.sanctionDate
+            ? new Date(req.body.sanctionDate)
+            : existingLoan.firstDueDate
+              ? new Date(existingLoan.firstDueDate)
+              : new Date(updatedLoan.sanctionDate || updatedLoan.createdAt);
 
-      await tx.loanSchedule.deleteMany({ where: { loanId: existingLoan.id } });
-
-      if (updatedLoan.noOfDues > 0 && updatedLoan.perDueAmount > 0) {
-        const lastEmi = resolveLastEmiAmount(updatedLoan.totalDueAmount, updatedLoan.perDueAmount, updatedLoan.noOfDues);
-        await tx.loanSchedule.createMany({
-          data: buildScheduleRows(
-            updatedLoan.id,
-            updatedLoan.noOfDues,
-            updatedLoan.perDueAmount,
-            scheduleStart,
-            packageFrequency,
-            lastEmi
-          ),
+        await tx.loan.update({
+          where: { id: existingLoan.id },
+          data: { firstDueDate: scheduleStart },
         });
-      }
 
+        await tx.loanSchedule.deleteMany({ where: { loanId: existingLoan.id } });
+
+        if (updatedLoan.noOfDues > 0 && updatedLoan.perDueAmount > 0) {
+          const lastEmi = resolveLastEmiAmount(updatedLoan.totalDueAmount, updatedLoan.perDueAmount, updatedLoan.noOfDues);
+          await tx.loanSchedule.createMany({
+            data: buildScheduleRows(
+              updatedLoan.id,
+              updatedLoan.noOfDues,
+              updatedLoan.perDueAmount,
+              scheduleStart,
+              packageFrequency,
+              lastEmi
+            ),
+          });
+        }
+      }
+    }
+
+    if (status === LoanStatus.APPROVED && existingLoan.status !== LoanStatus.APPROVED) {
       const liabilityAmount = existingLoan.totalDueAmount || 0;
       const disbursedAmount = existingLoan.netDisbursement || existingLoan.amount || 0;
 
@@ -421,27 +435,32 @@ export const updateLoanFinancial = asyncHandler(async (req: Request, res: Respon
       },
     });
 
-    if (existingLoan.status === LoanStatus.APPROVED) {
-      const packageFrequency =
-        existingLoan.package?.frequency?.toUpperCase() ||
-        existingLoan.customer?.center?.repaymentType?.toUpperCase() ||
-        'WEEKLY';
-      const scheduleStart = updated.firstDueDate
-        ? new Date(updated.firstDueDate)
-        : new Date(updated.sanctionDate || updated.createdAt);
+    if (existingLoan.status === LoanStatus.APPROVED || existingLoan.status === LoanStatus.ACTIVE) {
+      const paidScheduleCount = await tx.loanSchedule.count({
+        where: { loanId: existingLoan.id, status: { not: ScheduleStatus.PENDING } }
+      });
+      if (paidScheduleCount === 0) {
+        const packageFrequency =
+          existingLoan.package?.frequency?.toUpperCase() ||
+          existingLoan.customer?.center?.repaymentType?.toUpperCase() ||
+          'WEEKLY';
+        const scheduleStart = updated.firstDueDate
+          ? new Date(updated.firstDueDate)
+          : new Date(updated.sanctionDate || updated.createdAt);
 
-      await tx.loanSchedule.deleteMany({ where: { loanId: existingLoan.id } });
-      if (numDues > 0 && perDue > 0) {
-        await tx.loanSchedule.createMany({
-          data: buildScheduleRows(
-            updated.id,
-            numDues,
-            perDue,
-            scheduleStart,
-            packageFrequency,
-            lastEmi
-          ),
-        });
+        await tx.loanSchedule.deleteMany({ where: { loanId: existingLoan.id } });
+        if (numDues > 0 && perDue > 0) {
+          await tx.loanSchedule.createMany({
+            data: buildScheduleRows(
+              updated.id,
+              numDues,
+              perDue,
+              scheduleStart,
+              packageFrequency,
+              lastEmi
+            ),
+          });
+        }
       }
     }
 
