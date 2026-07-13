@@ -56,7 +56,7 @@ export const getCenters = async (req: Request, res: Response): Promise<any> => {
           }
         }
       },
-      orderBy: { name: 'asc' } as any,
+      orderBy: { code: 'asc' } as any,
     };
 
     if (paginate === 'true') {
