@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import prisma from '../src/utils/prisma';
-import { sumUnpaidScheduleAmount } from '../src/utils/collection.utils';
+import { sumUnpaidScheduleAmount } from '../src/utils/loan.utils';
 
 /**
  * fix-advance.ts
