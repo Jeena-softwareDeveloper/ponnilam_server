@@ -29,7 +29,7 @@ async function main() {
   }
 
   const today = collectionDateInput ? new Date(collectionDateInput) : new Date();
-  today.setHours(0, 0, 0, 0); // Normalize to start of day
+  today.setHours(23, 59, 59, 999); // Normalize to end of day to include all schedules due today
 
   // Find all ACTIVE loans in this branch
   const activeLoans = await prisma.loan.findMany({
