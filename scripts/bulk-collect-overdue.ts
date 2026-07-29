@@ -4,18 +4,23 @@ import { processLoanCollection } from '../src/utils/collection.utils';
 const prisma = new PrismaClient();
 
 async function main() {
-  const branchCode = process.argv[2] || 'BR002'; // Default to ANTHIYUR branch
-  const staffUsername = process.argv[3] || 'admin'; // Using admin staff for the collection entry
-  const collectionDateInput = process.argv[4]; // Optional: Date of collection, defaults to today
+  const centerCode = process.argv[2];
+  const staffUsername = process.argv[3] || 'admin'; 
+  const collectionDateInput = process.argv[4];
 
-  console.log(`Starting bulk collection for Branch: ${branchCode}`);
+  if (!centerCode) {
+    console.error(`Please provide a Center Code (e.g. ANT009) as the first argument.`);
+    process.exit(1);
+  }
 
-  const branch = await prisma.branch.findUnique({
-    where: { code: branchCode },
+  console.log(`Starting bulk collection for Center: ${centerCode}`);
+
+  const center = await prisma.center.findUnique({
+    where: { code: centerCode },
   });
 
-  if (!branch) {
-    console.error(`Branch with code ${branchCode} not found.`);
+  if (!center) {
+    console.error(`Center with code ${centerCode} not found.`);
     process.exit(1);
   }
 
@@ -29,16 +34,14 @@ async function main() {
   }
 
   const today = collectionDateInput ? new Date(collectionDateInput) : new Date();
-  today.setHours(23, 59, 59, 999); // Normalize to end of day to include all schedules due today
+  today.setHours(23, 59, 59, 999); 
 
-  // Find all ACTIVE loans in this branch
+  // Find all ACTIVE loans in this center
   const activeLoans = await prisma.loan.findMany({
     where: {
       status: 'ACTIVE',
       customer: {
-        area: {
-          branchId: branch.id,
-        },
+        centerId: center.id,
       },
     },
     include: {
@@ -58,7 +61,7 @@ async function main() {
     },
   });
 
-  console.log(`Found ${activeLoans.length} active loans in branch ${branch.name}.`);
+  console.log(`Found ${activeLoans.length} active loans in center ${center.name}.`);
 
   let totalProcessed = 0;
   let totalAmountCollected = 0;
