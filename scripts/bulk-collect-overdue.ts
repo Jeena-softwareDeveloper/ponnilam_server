@@ -4,23 +4,18 @@ import { processLoanCollection } from '../src/utils/collection.utils';
 const prisma = new PrismaClient();
 
 async function main() {
-  const centerCode = process.argv[2];
-  const staffUsername = process.argv[3] || 'admin'; 
-  const collectionDateInput = process.argv[4];
+  const branchCode = process.argv[2] || 'BR002'; // Default to ANTHIYUR branch
+  const staffUsername = process.argv[3] || 'admin'; // Using admin staff for the collection entry
+  const collectionDateInput = process.argv[4]; // Optional: Date of collection, defaults to today
 
-  if (!centerCode) {
-    console.error(`Please provide a Center Code (e.g. ANT009) as the first argument.`);
-    process.exit(1);
-  }
+  console.log(`Starting bulk collection for Branch: ${branchCode}`);
 
-  console.log(`Starting bulk collection for Center: ${centerCode}`);
-
-  const center = await prisma.center.findUnique({
-    where: { code: centerCode },
+  const branch = await prisma.branch.findUnique({
+    where: { code: branchCode },
   });
 
-  if (!center) {
-    console.error(`Center with code ${centerCode} not found.`);
+  if (!branch) {
+    console.error(`Branch with code ${branchCode} not found.`);
     process.exit(1);
   }
 
@@ -34,14 +29,18 @@ async function main() {
   }
 
   const today = collectionDateInput ? new Date(collectionDateInput) : new Date();
-  today.setHours(23, 59, 59, 999); 
+  today.setHours(23, 59, 59, 999); // Normalize to end of day to include all schedules due today
 
-  // Find all ACTIVE loans in this center
+  // Find all ACTIVE loans in this branch
   const activeLoans = await prisma.loan.findMany({
     where: {
-      status: 'ACTIVE',
+      status: {
+        in: ['ACTIVE', 'APPROVED'],
+      },
       customer: {
-        centerId: center.id,
+        area: {
+          branchId: branch.id,
+        },
       },
     },
     include: {
@@ -61,7 +60,7 @@ async function main() {
     },
   });
 
-  console.log(`Found ${activeLoans.length} active loans in center ${center.name}.`);
+  console.log(`Found ${activeLoans.length} active loans in branch ${branch.name}.`);
 
   let totalProcessed = 0;
   let totalAmountCollected = 0;
