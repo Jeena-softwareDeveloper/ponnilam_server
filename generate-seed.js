@@ -276,9 +276,9 @@ async function main() {
     update: {}, create: { name: 'Erode', stateId: state.id },
   });
   const branch = await prisma.branch.upsert({
-    where: { code: 'SATHI' }, update: {},
+    where: { code: 'BR001' }, update: {},
     create: {
-      name: 'Sathiyamangalam', code: 'SATHI',
+      name: 'Sathiyamangalam', code: 'BR001',
       location: '13/04, VSB Nest, Sri Venugopalasamy Temple Street, Sathyamangalam - 638 401.',
       phone: '9944533403',
       stateId: state.id, districtId: district.id,
