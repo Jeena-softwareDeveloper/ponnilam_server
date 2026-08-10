@@ -33,7 +33,7 @@ async function main() {
           data: { customerNo: newCustomerNo }
         });
         cusFixed++;
-      } catch (err) {
+      } catch (err: any) {
         console.error(`Failed to update customer ${cus.customerNo}:`, err.message);
       }
     }
@@ -63,7 +63,7 @@ async function main() {
           data: { loanNumber: newLoanNo }
         });
         loansFixed++;
-      } catch (err) {
+      } catch (err: any) {
         console.error(`Failed to update loan ${loan.loanNumber}:`, err.message);
       }
     }
