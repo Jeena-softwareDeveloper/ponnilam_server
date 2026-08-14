@@ -125,7 +125,7 @@ export const getDashboardTrend = async (req: Request, res: Response) => {
     const { now, thisMonthStart } = dateBoundaries();
 
     const rows = await prisma.collection.findMany({
-      where: { ...whereCollection, trnDate: { gte: thisMonthStart } },
+      where: { ...whereCollection, trnDate: { gte: thisMonthStart }, isVoided: false },
       select: { amount: true, trnDate: true }
     });
 
@@ -185,7 +185,8 @@ export const getDashboardCharts = async (req: Request, res: Response) => {
       const s = await prisma.collection.aggregate({
         where: {
           loan: { customer: { area: areaId ? { id: areaId, branchId: b.id } : { branchId: b.id } } },
-          trnDate: { gte: thisMonthStart }
+          trnDate: { gte: thisMonthStart },
+          isVoided: false
         },
         _sum: { amount: true }
       });
