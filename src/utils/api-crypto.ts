@@ -70,5 +70,7 @@ export function unwrapEncrypted(body: unknown): unknown {
 
 export function shouldEncryptPath(path: string): boolean {
   if (!path.startsWith('/api/v1')) return false;
+  // Public routes — no encryption, accessible by static sites without API key
+  if (path.startsWith('/api/v1/public/')) return false;
   return true;
 }
