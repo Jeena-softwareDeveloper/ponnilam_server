@@ -19,6 +19,9 @@ import reportRoutes from './modules/reports/report.routes';
 import dashboardRoutes from './modules/dashboard/dashboard.routes';
 import notificationRoutes from './modules/notifications/notifications.routes';
 import auditLogRoutes from './modules/auditLogs/auditLog.routes';
+import activityRoutes from './modules/activities/activity.routes';
+import activityCategoryRoutes from './modules/activities/activity-category.routes';
+import { getPublicActivities } from './modules/activities/activity-public.controller';
 import { authenticateToken, branchScope } from './middlewares/auth.middleware';
 import { requireAdmin } from './middlewares/admin.middleware';
 import { auditMiddleware } from './middlewares/audit.middleware';
@@ -76,6 +79,12 @@ app.use(encryptResponseBody);
 
 app.use('/api/v1/auth', authRoutes);
 
+// Public routes (no auth)
+app.get('/api/v1/public/activities', getPublicActivities);
+
+// Serve static uploads
+app.use('/uploads', express.static('public/uploads'));
+
 // Protect all masters routes with authenticateToken + branch scoping
 app.use('/api/v1/masters', authenticateToken);
 app.use('/api/v1/masters', branchScope);
@@ -97,6 +106,8 @@ app.use('/api/v1/reports', authenticateToken, branchScope, auditMiddleware('Repo
 app.use('/api/v1/dashboard', authenticateToken, branchScope, dashboardRoutes);
 app.use('/api/v1/notifications', authenticateToken, notificationRoutes);
 app.use('/api/v1/audit-logs', authenticateToken, branchScope, auditLogRoutes);
+app.use('/api/v1/activities', authenticateToken, branchScope, auditMiddleware('Activity'), activityRoutes);
+app.use('/api/v1/activity-categories', authenticateToken, branchScope, activityCategoryRoutes);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: Date.now(), service: 'NBFC API' });

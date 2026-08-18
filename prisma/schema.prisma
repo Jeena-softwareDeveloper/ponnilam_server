@@ -72,6 +72,8 @@ model Branch {
   staffs        Staff[]
   menus         BranchMenu[]
   notifications Notification[]
+  activities    Activity[]
+  activityCategories ActivityCategory[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -583,4 +585,42 @@ model LoanGuarantor {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// ==========================================
+// Activities / Gallery
+// ==========================================
+
+model ActivityCategory {
+  id        String   @id @default(uuid())
+  name      String
+
+  branchId  String?
+  branch    Branch?  @relation(fields: [branchId], references: [id])
+
+  activities Activity[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([name, branchId])
+  @@index([branchId])
+}
+
+model Activity {
+  id        String   @id @default(uuid())
+  slug      String
+  photoUrl  String
+
+  categoryId String?
+  category   ActivityCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  branchId  String?
+  branch    Branch?  @relation(fields: [branchId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([branchId])
+  @@index([categoryId])
 }

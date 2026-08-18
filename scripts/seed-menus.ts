@@ -42,6 +42,12 @@ async function main() {
     create: { name: 'Reports', path: '/admin/reports', icon: 'PieChart' },
   });
 
+  const activities = await prisma.menu.upsert({
+    where: { name: 'Activities' },
+    update: { path: '/admin/activities', icon: 'Image' },
+    create: { name: 'Activities', path: '/admin/activities', icon: 'Image' },
+  });
+
   // Masters Parent
   const masters = await prisma.menu.upsert({
     where: { name: 'Masters' },
