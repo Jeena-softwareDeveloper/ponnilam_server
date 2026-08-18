@@ -8,7 +8,7 @@ fs.mkdirSync(activitiesUploadDir, { recursive: true });
 
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
-    if (file.fieldname === 'photo') {
+    if (file.fieldname === 'photo' || file.fieldname === 'photos') {
       cb(null, activitiesUploadDir);
     } else {
       cb(null, path.join(process.cwd(), 'public', 'uploads'));
