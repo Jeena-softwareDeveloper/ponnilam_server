@@ -316,7 +316,7 @@ export const updateLoanStatus = asyncHandler(async (req: Request, res: Response)
 });
 
 export const getLoans = asyncHandler(async (req: Request, res: Response) => {
-  const { customerId, status, branchId, centerId } = req.query;
+  const { customerId, status, branchId, centerId, search } = req.query;
   const where: any = {};
   if (customerId) where.customerId = String(customerId);
   if (status) {
@@ -326,6 +326,14 @@ export const getLoans = asyncHandler(async (req: Request, res: Response) => {
 
   if (centerId) {
     where.customer = { ...where.customer, centerId: String(centerId) };
+  }
+
+  if (search) {
+    where.OR = [
+      { loanNumber: { contains: String(search) } },
+      { customer: { name: { contains: String(search) } } },
+      { customer: { customerNo: { contains: String(search) } } },
+    ];
   }
 
   const user = (req as any).user;
