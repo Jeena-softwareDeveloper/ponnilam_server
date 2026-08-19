@@ -356,9 +356,11 @@ export const getLoans = asyncHandler(async (req: Request, res: Response) => {
         customer: { include: { area: { include: { branch: true } }, center: true } },
         staff: true,
         schedules: { orderBy: { dueDate: 'asc' } },
-        collections: { where: { isVoided: false }, take: 5, orderBy: { trnDate: 'desc' } },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: [
+        { createdAt: 'desc' },
+        { loanNumber: 'desc' }
+      ],
       skip,
       take: limit,
     }),

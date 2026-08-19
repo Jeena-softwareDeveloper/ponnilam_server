@@ -466,7 +466,10 @@ export const getCustomers = asyncHandler(async (req: Request, res: Response) => 
           center: true,
           coApplicant: true,
         },
-        orderBy: { createdAt: 'desc' },
+        orderBy: [
+          { createdAt: 'desc' },
+          { customerNo: 'desc' }
+        ],
         skip,
         take: limit,
       }),
