@@ -29,10 +29,21 @@ async function main() {
   await prisma.$transaction(async (tx) => {
     let currentNumber = 1;
 
+    // Pass 1: Rename all to a temporary prefix to avoid Unique Constraint errors
+    console.log("Pass 1: Freeing up the loan numbers namespace...");
+    for (const loan of loansToUpdate) {
+      await tx.loan.update({
+        where: { id: loan.id },
+        data: { loanNumber: `TEMP-${loan.id}` }
+      });
+    }
+
+    // Pass 2: Assign proper sequential numbers chronologically
+    console.log("Pass 2: Assigning correct sequential numbers...");
     for (const loan of loansToUpdate) {
       const newLoanNumber = `SAT-L${currentNumber.toString().padStart(4, '0')}`;
       
-      // Only update if it's different
+      // Only update if it's different from original
       if (loan.loanNumber !== newLoanNumber) {
         console.log(`Updating Loan ID: ${loan.id} from ${loan.loanNumber} -> ${newLoanNumber}`);
         await tx.loan.update({
