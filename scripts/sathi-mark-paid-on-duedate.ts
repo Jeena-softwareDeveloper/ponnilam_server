@@ -21,7 +21,7 @@ async function markPaidOnDueDate() {
           }
         }
       },
-      status: 'ACTIVE'
+      status: { in: ['ACTIVE', 'APPROVED'] }
     },
     include: {
       schedules: {
