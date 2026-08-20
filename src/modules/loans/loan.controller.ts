@@ -427,8 +427,8 @@ export const updateLoanFinancial = asyncHandler(async (req: Request, res: Respon
   const editPerm = await assertMenuPermission(user, '/admin/loans', 'canEdit');
   if (editPerm) return res.status(403).json({ error: editPerm });
 
-  if (existingLoan.status !== LoanStatus.PENDING && existingLoan.status !== LoanStatus.APPROVED) {
-    return res.status(400).json({ error: 'Financial fields can only be edited for PENDING or APPROVED loans' });
+  if (existingLoan.status === LoanStatus.CLOSED) {
+    return res.status(400).json({ error: 'Cannot edit CLOSED loans' });
   }
 
   const [paidSchedules, collectionCount] = await Promise.all([
@@ -437,8 +437,17 @@ export const updateLoanFinancial = asyncHandler(async (req: Request, res: Respon
     }),
     prisma.collection.count({ where: { loanId: existingLoan.id, isVoided: false } }),
   ]);
-  if (paidSchedules > 0 || collectionCount > 0) {
-    return res.status(400).json({ error: 'Cannot change financial details after collections have been recorded.' });
+
+  const hasFinancialChanges = 
+    (amount !== undefined && Number(amount) !== existingLoan.amount) ||
+    (noOfDues !== undefined && Number(noOfDues) !== existingLoan.noOfDues) ||
+    (perDueAmount !== undefined && Number(perDueAmount) !== existingLoan.perDueAmount) ||
+    (totalDueAmount !== undefined && Number(totalDueAmount) !== existingLoan.totalDueAmount) ||
+    (deductionAmount !== undefined && Number(deductionAmount) !== existingLoan.deductionAmount) ||
+    (netDisbursement !== undefined && Number(netDisbursement) !== existingLoan.netDisbursement);
+
+  if ((paidSchedules > 0 || collectionCount > 0) && hasFinancialChanges) {
+    return res.status(400).json({ error: 'Cannot change financial amounts after collections have been recorded. You can only edit dates.' });
   }
 
   const numDues = Number(noOfDues ?? existingLoan.noOfDues);
@@ -457,23 +466,44 @@ export const updateLoanFinancial = asyncHandler(async (req: Request, res: Respon
     return res.status(400).json({ error: 'Net disbursement must equal loan amount minus deduction' });
   }
 
-  const loan = await prisma.$transaction(async (tx) => {
-    const updated = await tx.loan.update({
-      where: { id: String(id) },
-      data: {
-        amount: loanAmount,
-        noOfDues: numDues,
-        perDueAmount: perDue,
-        totalDueAmount: totalDue,
-        deductionAmount: deduct,
-        netDisbursement: net,
-        outstandingAmount: totalDue,
-        ...(firstDueDate && { firstDueDate: new Date(firstDueDate) }),
-        ...(sanctionDate && { sanctionDate: new Date(sanctionDate) }),
-        ...(disbursementDate && { disbursementDate: new Date(disbursementDate) }),
-        ...(remarks !== undefined && { remarks }),
-      },
-    });
+    const loan = await prisma.$transaction(async (tx) => {
+      const datesChanged = 
+        (firstDueDate && new Date(firstDueDate).getTime() !== existingLoan.firstDueDate?.getTime()) ||
+        (sanctionDate && new Date(sanctionDate).getTime() !== existingLoan.sanctionDate?.getTime()) ||
+        (disbursementDate && new Date(disbursementDate).getTime() !== existingLoan.disbursementDate?.getTime());
+
+      const updated = await tx.loan.update({
+        where: { id: String(id) },
+        data: {
+          amount: loanAmount,
+          noOfDues: numDues,
+          perDueAmount: perDue,
+          totalDueAmount: totalDue,
+          deductionAmount: deduct,
+          netDisbursement: net,
+          outstandingAmount: totalDue,
+          ...(firstDueDate && { firstDueDate: new Date(firstDueDate) }),
+          ...(sanctionDate && { sanctionDate: new Date(sanctionDate) }),
+          ...(disbursementDate && { disbursementDate: new Date(disbursementDate) }),
+          ...(remarks !== undefined && { remarks }),
+        },
+      });
+
+      if (datesChanged && existingLoan.status === LoanStatus.ACTIVE) {
+        const pDisb = existingLoan.disbursementDate?.toISOString().split('T')[0] || 'None';
+        const pDue = existingLoan.firstDueDate?.toISOString().split('T')[0] || 'None';
+        await tx.loanLedger.create({
+          data: {
+            loanId: existingLoan.id,
+            date: new Date(),
+            transactionType: 'ADJUSTMENT',
+            amount: 0,
+            openingBalance: existingLoan.outstandingAmount,
+            closingBalance: existingLoan.outstandingAmount,
+            remarks: `Loan dates modified by staff. Previous Disbursement: ${pDisb}, First Due: ${pDue}`
+          }
+        });
+      }
 
     if (existingLoan.status === LoanStatus.APPROVED || existingLoan.status === LoanStatus.ACTIVE) {
       const paidScheduleCount = await tx.loanSchedule.count({
