@@ -12,7 +12,15 @@ async function markPaidOnDueDate() {
   // Get all active loans for Sathiyamangalam
   const sathiLoans = await prisma.loan.findMany({
     where: {
-      loanNumber: { startsWith: 'SAT' },
+      customer: {
+        center: {
+          area: {
+            branch: {
+              name: 'Sathiyamangalam'
+            }
+          }
+        }
+      },
       status: 'ACTIVE'
     },
     include: {
