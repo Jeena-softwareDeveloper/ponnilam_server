@@ -1,10 +1,6 @@
 import * as dotenv from 'dotenv';
 import * as fs from 'fs';
-if (fs.existsSync('.env.production')) {
-  dotenv.config({ path: '.env.production' });
-} else {
-  dotenv.config();
-}
+dotenv.config();
 
 import { PrismaClient } from '@prisma/client';
 import { LoanStatus, ScheduleStatus } from '../src/utils/prisma-enums';
