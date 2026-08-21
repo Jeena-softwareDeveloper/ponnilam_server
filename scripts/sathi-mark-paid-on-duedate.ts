@@ -1,3 +1,10 @@
+import * as dotenv from 'dotenv';
+import * as fs from 'fs';
+if (fs.existsSync('.env.production')) {
+  dotenv.config({ path: '.env.production' });
+} else {
+  dotenv.config();
+}
 import { PrismaClient } from '@prisma/client';
 import { processLoanCollection } from '../src/utils/collection.utils';
 
@@ -49,7 +56,7 @@ async function markPaidOnDueDate() {
       if (overdueAmount > 0) {
         try {
           await prisma.$transaction(async (tx) => {
-            await processLoanCollection(tx as any, {
+            const res = await processLoanCollection(tx as any, {
               loanId: loan.id,
               amount: overdueAmount,
               trnDate: sch.dueDate, // Use exact due date!
@@ -57,11 +64,14 @@ async function markPaidOnDueDate() {
               remarks: `System Auto-Collection on Due Date`,
               isAdmin: true,
             });
+            if (res.skipped) {
+              console.log(`  - Skipped ${overdueAmount} for ${sch.dueDate.toISOString().slice(0, 10)}: ${res.skipReason}`);
+            } else {
+              schedulesProcessed++;
+              totalAmountCollected += overdueAmount;
+              console.log(`  - Collected ₹${overdueAmount} for Due Date: ${sch.dueDate.toISOString().slice(0, 10)}`);
+            }
           });
-          
-          schedulesProcessed++;
-          totalAmountCollected += overdueAmount;
-          console.log(`  - Collected ₹${overdueAmount} for Due Date: ${sch.dueDate.toISOString().slice(0, 10)}`);
         } catch (err: any) {
           console.error(`  - Error processing schedule for loan ${loan.loanNumber} on ${sch.dueDate}:`, err.message);
         }
