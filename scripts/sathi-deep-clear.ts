@@ -6,8 +6,9 @@ if (fs.existsSync('.env.production')) {
   dotenv.config();
 }
 
-import { PrismaClient, LoanStatus, ScheduleStatus } from '@prisma/client';
-import { getNextTrnNumber } from '../src/utils/sequence.utils';
+import { PrismaClient } from '@prisma/client';
+import { LoanStatus, ScheduleStatus } from '../src/utils/prisma-enums';
+import { nextTrnNumber } from '../src/utils/sequence.utils';
 import { sumUnpaidScheduleAmount } from '../src/utils/loan.utils';
 import { toCollectionDay } from '../src/utils/date.utils';
 
@@ -64,7 +65,7 @@ async function deepClearSathiOverdue() {
           if (due <= 0) continue;
 
           // Create collection for this specific schedule
-          const trnNumber = await getNextTrnNumber(tx as any);
+          const trnNumber = await nextTrnNumber(tx as any);
           const collectionDay = toCollectionDay(new Date(sch.dueDate));
           
           // Check if collection already exists for this exact day to avoid duplicates
