@@ -171,7 +171,7 @@ export async function processLoanCollection(
   const leftover = await allocateCollection(tx, loan.id, loan.schedules, pool, normalizedTrnDate, collection.id);
 
   const newScheduleOutstanding = await sumUnpaidScheduleAmount(tx, loan.id);
-  let newOutstanding = Math.max(0, newScheduleOutstanding - leftover);
+  let newOutstanding = newScheduleOutstanding;
   let newAdvanceBalance = leftover;
 
   let newStatus = loan.status;

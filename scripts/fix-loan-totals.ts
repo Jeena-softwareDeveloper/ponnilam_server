@@ -30,7 +30,6 @@ async function fixLoanTotals() {
 
     // 4. Calculate correct outstanding based on schedules
     let realOutstanding = loan.schedules.reduce((sum, s) => sum + Math.max(0, s.emiAmount - (s.amountPaid || 0)), 0);
-    realOutstanding = Math.max(0, realOutstanding - realAdvance);
 
     const isTotalDueWrong = loan.totalDueAmount !== realTotalDue;
     const isOutstandingWrong = loan.outstandingAmount !== realOutstanding;
