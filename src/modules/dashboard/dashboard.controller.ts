@@ -227,7 +227,7 @@ export const getDashboardActivity = async (req: Request, res: Response) => {
         take: 5
       }),
       prisma.loanSchedule.findMany({
-        where: { loan: whereLoan, status: { in: UNPAID_SCHEDULE_STATUSES }, dueDate: { lt: todayStart } },
+        where: { loan: { ...whereLoan, status: { in: LOAN_COLLECTIBLE_STATUSES } }, status: { in: UNPAID_SCHEDULE_STATUSES }, dueDate: { lt: todayStart } },
         select: { loanId: true, dueDate: true, emiAmount: true, amountPaid: true, loan: { select: { outstandingAmount: true } } }
       })
     ]);
