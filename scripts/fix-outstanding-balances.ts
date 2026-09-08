@@ -6,7 +6,13 @@ async function fixOutstandingBalances() {
 
   const loans = await prisma.loan.findMany({
     where: {
-      status: { in: ['ACTIVE', 'APPROVED'] }
+      status: { in: ['ACTIVE', 'APPROVED'] },
+      OR: [
+        { loanNumber: { startsWith: 'SAT' } },
+        { customer: { area: { branch: { code: 'SATHI' } } } },
+        { customer: { area: { branch: { name: { contains: 'Sathiyamangalam' } } } } },
+        { customer: { area: { branch: { name: { contains: 'Sathyamangalam' } } } } }
+      ]
     },
     include: {
       schedules: true,

@@ -5,10 +5,26 @@ async function fixLoanTotals() {
   console.log('--- Starting Comprehensive Loan Data Fix ---');
 
   const loans = await prisma.loan.findMany({
+    where: {
+      OR: [
+        { loanNumber: { startsWith: 'SAT' } },
+        { customer: { area: { branch: { code: 'SATHI' } } } },
+        { customer: { area: { branch: { name: { contains: 'Sathiyamangalam' } } } } },
+        { customer: { area: { branch: { name: { contains: 'Sathyamangalam' } } } } }
+      ]
+    },
     include: {
       schedules: true,
       collections: { where: { isVoided: false } },
-      customer: true
+      customer: {
+        include: {
+          area: {
+            include: {
+              branch: true
+            }
+          }
+        }
+      }
     }
   });
 
