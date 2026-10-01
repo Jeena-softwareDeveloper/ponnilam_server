@@ -28,9 +28,22 @@ export async function allocateCollection(
 ) {
   let remaining = poolAmount;
   const targetDay = toCollectionDay(trnDate);
+
+  // Calculate total unpaid across ALL schedules (including future-dated ones)
+  const totalUnpaid = schedules.reduce((sum, s) => {
+    if (!UNPAID_SCHEDULE_STATUSES.includes(s.status as ScheduleStatus)) return sum;
+    return sum + (s.emiAmount - (s.amountPaid || 0));
+  }, 0);
+
+  // PRE-CLOSE detection: pool covers the entire remaining outstanding.
+  // Mark every unpaid schedule PAID regardless of due date so that
+  // sumUnpaidScheduleAmount returns 0 and the loan is correctly CLOSED.
+  const isPreClose = remaining >= totalUnpaid - 0.01;
+
   for (const schedule of schedules) {
     if (remaining <= 0) break;
-    if (toCollectionDay(schedule.dueDate) > targetDay) {
+    // Normal collection stops at future-dated schedules; pre-close does not.
+    if (!isPreClose && toCollectionDay(schedule.dueDate) > targetDay) {
       break;
     }
     const due = schedule.emiAmount - (schedule.amountPaid || 0);
@@ -172,14 +185,20 @@ export async function processLoanCollection(
 
   const newScheduleOutstanding = await sumUnpaidScheduleAmount(tx, loan.id);
   let newOutstanding = newScheduleOutstanding;
-  let newAdvanceBalance = leftover;
-
   let newStatus = loan.status;
+  let newAdvanceBalance: number;
+
   if (newOutstanding <= 0) {
+    // Fully paid off — close loan, clear advance balance
     newOutstanding = 0;
+    newAdvanceBalance = 0;
     newStatus = LoanStatus.CLOSED;
-  } else if (loan.status === LoanStatus.APPROVED) {
-    newStatus = LoanStatus.ACTIVE;
+  } else {
+    // Partial payment — carry leftover as advance for next collection
+    newAdvanceBalance = leftover;
+    if (loan.status === LoanStatus.APPROVED) {
+      newStatus = LoanStatus.ACTIVE;
+    }
   }
 
   await tx.loan.update({
@@ -201,7 +220,7 @@ export async function processLoanCollection(
 
   await tx.customerLedger.create({
     data: {
-      transactionType: 'Collection',
+      transactionType: newStatus === LoanStatus.CLOSED ? 'Pre-Close' : 'Collection',
       amount,
       openingBalance: customerOpening,
       closingBalance: customerClosing,
@@ -221,7 +240,7 @@ export async function processLoanCollection(
 
   await tx.loanLedger.create({
     data: {
-      transactionType: 'EMI Collection',
+      transactionType: newStatus === LoanStatus.CLOSED ? 'Pre-Close' : 'EMI Collection',
       amount,
       openingBalance: loanOpening,
       closingBalance: loanClosing,
@@ -297,11 +316,14 @@ export async function voidCollection(
     newStatus = LoanStatus.ACTIVE;
   }
 
+  // After void replay, if fully paid off, advance balance must be 0
+  const finalAdvanceBalance = newOutstanding <= 0 ? 0 : advanceBalance;
+
   await tx.loan.update({
     where: { id: loan.id },
     data: {
       outstandingAmount: Math.max(0, newOutstanding),
-      advanceBalance,
+      advanceBalance: finalAdvanceBalance,
       status: newStatus,
     },
   });

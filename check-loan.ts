@@ -1,21 +1,28 @@
 import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
+
 async function main() {
-  const loan = await prisma.loan.findFirst({
+  // Find all ACTIVE/APPROVED loans - check for pre-close stuck ones
+  const loans = await prisma.loan.findMany({
+    where: { status: { in: ['ACTIVE', 'APPROVED', 'CLOSED'] } },
+    include: { schedules: true },
     orderBy: { createdAt: 'desc' },
-    include: { schedules: true }
+    take: 50,
   });
-  if (!loan) {
-    console.log('Loan not found');
-    return;
+
+  console.log('Total loans checked:', loans.length);
+  for (const loan of loans) {
+    const unpaid = loan.schedules.filter(s => s.status === 'PENDING' || s.status === 'PARTIAL');
+    const unpaidSum = unpaid.reduce((a, s) => a + (s.emiAmount - (s.amountPaid || 0)), 0);
+    const adv = loan.advanceBalance || 0;
+    console.log(
+      loan.loanNumber,
+      loan.status,
+      'outstanding:', loan.outstandingAmount,
+      'advance:', adv,
+      'unpaidSchedSum:', unpaidSum,
+      'unpaidCount:', unpaid.length
+    );
   }
-  console.log('Loan No:', loan.loanNumber);
-  console.log('Amount:', loan.amount);
-  console.log('Total Due:', loan.totalDueAmount);
-  console.log('Outstanding:', loan.outstandingAmount);
-  console.log('Net Disb:', loan.netDisbursement);
-  const paid = loan.schedules.filter(s => s.status === 'PAID').length;
-  console.log('Paid EMIs:', paid);
-  console.log('Schedules:', loan.schedules.length);
 }
 main().finally(() => prisma.$disconnect());
