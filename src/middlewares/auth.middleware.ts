@@ -23,6 +23,32 @@ export const authenticateToken = async (req: AuthRequest, res: Response, next: N
     const decoded = jwt.verify(token, jwtSecret) as any;
 
 
+    if (decoded.role === 'Customer' && (decoded.customerId || decoded.id)) {
+      const customerId = decoded.customerId || decoded.id;
+      const customer = await prisma.customer.findUnique({
+        where: { id: customerId },
+        include: { area: true, center: true }
+      });
+      if (!customer) {
+        return res.status(401).json({ error: 'Access denied. Customer not found.' });
+      }
+      if (!customer.isActive) {
+        return res.status(403).json({ error: 'Access denied. Customer account is inactive.' });
+      }
+      req.user = {
+        id: customer.id,
+        name: customer.name,
+        role: { name: 'Customer' },
+        customerId: customer.id,
+        customerNo: customer.customerNo,
+        phone: customer.mobile || customer.phone,
+        branchId: customer.area?.branchId || null,
+        areaId: customer.areaId,
+        centerId: customer.centerId,
+      };
+      return next();
+    }
+
     // Lookup staff in DB to get role and branch details
     const staff = await prisma.staff.findUnique({
       where: { id: decoded.id },
@@ -49,6 +75,11 @@ export const authenticateToken = async (req: AuthRequest, res: Response, next: N
 };
 
 export const branchScope = async (req: AuthRequest, res: Response, next: NextFunction): Promise<any> => {
+  if (req.user?.role?.name === 'Customer') {
+    res.locals.areaIds = req.user.areaId ? [req.user.areaId] : [];
+    return next();
+  }
+
   if (req.user?.role?.name !== 'Admin') {
 
     // ─── Force branchId / areaId on query and body ───────────────────────────

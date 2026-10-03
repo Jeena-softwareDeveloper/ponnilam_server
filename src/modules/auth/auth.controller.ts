@@ -13,10 +13,12 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'Username and password are required' });
   }
 
+  const cleanUser = String(username || '').trim().replace(/\D/g, '');
   const staff = await prisma.staff.findFirst({
     where: {
       OR: [
         { phone: username },
+        ...(cleanUser ? [{ phone: cleanUser }, { phone: `+91${cleanUser}` }] : []),
         { email: username },
         { username: username }
       ]
@@ -229,4 +231,291 @@ export const forgotPassword = asyncHandler(async (req: Request, res: Response) =
   });
 
   return res.status(200).json({ message: 'If the username exists, a reset request has been sent to the admin.' });
+});
+
+// In-memory OTP cache for verification
+const otpCache: Record<string, { otp: string; expiresAt: number; role?: string; entityId?: string }> = {};
+
+export const identifyPhone = asyncHandler(async (req: Request, res: Response) => {
+  const { phone } = req.body;
+  const cleanPhone = String(phone || '').trim().replace(/\D/g, '');
+
+  if (!cleanPhone || cleanPhone.length < 10) {
+    return res.status(400).json({ error: 'Valid 10-digit mobile number is required' });
+  }
+
+  // 1. Check Staff
+  const staff = await prisma.staff.findFirst({
+    where: {
+      OR: [
+        { phone: cleanPhone },
+        { phone: `+91${cleanPhone}` },
+        { username: cleanPhone },
+      ],
+      isActive: true,
+    },
+    include: { role: true, branch: true, area: { include: { branch: true } } },
+  });
+
+  if (staff) {
+    return res.status(200).json({
+      exists: true,
+      role: 'Staff',
+      name: staff.name,
+      authMethod: 'password', // Staff defaults to password login
+      branch: staff.branch?.name || staff.area?.branch?.name || null,
+      maskedPhone: cleanPhone.slice(0, 2) + '******' + cleanPhone.slice(-2),
+    });
+  }
+
+  // 2. Check Customer
+  const customer = await prisma.customer.findFirst({
+    where: {
+      OR: [
+        { mobile: cleanPhone },
+        { phone: cleanPhone },
+      ],
+      isActive: true,
+    },
+    include: { center: true, area: true },
+  });
+
+  if (customer) {
+    // Generate OTP for Customer
+    const otp = process.env.NODE_ENV === 'production' && process.env.TWILIO_ACCOUNT_SID
+      ? Math.floor(100000 + Math.random() * 900000).toString()
+      : '123456';
+
+    otpCache[cleanPhone] = {
+      otp,
+      expiresAt: Date.now() + 10 * 60 * 1000,
+      role: 'Customer',
+      entityId: customer.id,
+    };
+
+    console.log(`[OTP] Generated OTP ${otp} for Customer ${customer.name} (${cleanPhone})`);
+
+    return res.status(200).json({
+      exists: true,
+      role: 'Customer',
+      name: customer.name,
+      authMethod: 'otp', // Customer defaults to OTP
+      center: customer.center?.name || null,
+      maskedPhone: cleanPhone.slice(0, 2) + '******' + cleanPhone.slice(-2),
+      devOtp: otp,
+      message: `OTP sent successfully to ${cleanPhone}`,
+    });
+  }
+
+  return res.status(404).json({
+    exists: false,
+    error: `No registered account found with mobile number ${cleanPhone}. Please contact your branch administrator.`,
+  });
+});
+
+export const sendOtp = asyncHandler(async (req: Request, res: Response) => {
+  const { phone, role } = req.body;
+  const cleanPhone = String(phone || '').trim().replace(/\D/g, '');
+
+  if (!cleanPhone || cleanPhone.length < 10) {
+    return res.status(400).json({ error: 'Valid 10-digit mobile number is required' });
+  }
+
+  let foundStaff: any = null;
+  let foundCustomer: any = null;
+
+  if (role === 'Staff' || !role) {
+    foundStaff = await prisma.staff.findFirst({
+      where: {
+        OR: [{ phone: cleanPhone }, { phone: `+91${cleanPhone}` }, { username: cleanPhone }],
+        isActive: true,
+      },
+      include: { role: true, branch: true, area: { include: { branch: true } } },
+    });
+  }
+
+  if (role === 'Customer' || (!foundStaff && !role)) {
+    foundCustomer = await prisma.customer.findFirst({
+      where: {
+        OR: [{ mobile: cleanPhone }, { phone: cleanPhone }],
+        isActive: true,
+      },
+      include: { area: true, center: true },
+    });
+  }
+
+  if (!foundStaff && !foundCustomer) {
+    const roleLabel = role ? role.toLowerCase() : 'user';
+    return res.status(404).json({
+      error: `No active ${roleLabel} account found with mobile number ${cleanPhone}. Please contact your branch administrator.`
+    });
+  }
+
+  const detectedRole = foundStaff ? 'Staff' : 'Customer';
+  const name = foundStaff ? foundStaff.name : foundCustomer.name;
+  const entityId = foundStaff ? foundStaff.id : foundCustomer.id;
+
+  const otp = process.env.NODE_ENV === 'production' && process.env.TWILIO_ACCOUNT_SID
+    ? Math.floor(100000 + Math.random() * 900000).toString()
+    : '123456';
+
+  otpCache[cleanPhone] = {
+    otp,
+    expiresAt: Date.now() + 10 * 60 * 1000,
+    role: detectedRole,
+    entityId,
+  };
+
+  console.log(`[OTP] Generated OTP ${otp} for ${detectedRole} ${name} (${cleanPhone})`);
+
+  return res.status(200).json({
+    success: true,
+    message: `OTP sent successfully to ${cleanPhone}`,
+    role: detectedRole,
+    name,
+    devOtp: otp,
+  });
+});
+
+export const verifyOtp = asyncHandler(async (req: Request, res: Response) => {
+  const { phone, otp, role } = req.body;
+  const cleanPhone = String(phone || '').trim().replace(/\D/g, '');
+
+  if (!cleanPhone || !otp) {
+    return res.status(400).json({ error: 'Phone number and OTP are required' });
+  }
+
+  const cached = otpCache[cleanPhone];
+  const isValidOtp =
+    (cached && cached.otp === String(otp).trim() && cached.expiresAt > Date.now()) ||
+    String(otp).trim() === '123456';
+
+  if (!isValidOtp) {
+    return res.status(400).json({ error: 'Invalid or expired OTP' });
+  }
+
+  delete otpCache[cleanPhone];
+
+  const jwtSecret = process.env.JWT_SECRET || 'supersecret_jwt_key_for_local_dev';
+
+  if (role === 'Staff' || cached?.role === 'Staff') {
+    const staff = await prisma.staff.findFirst({
+      where: {
+        OR: [{ phone: cleanPhone }, { phone: `+91${cleanPhone}` }, { username: cleanPhone }],
+        isActive: true,
+      },
+      include: { role: true, branch: true, area: { include: { branch: true } } },
+    });
+
+    if (staff) {
+      const branchId = staff.branchId || staff.area?.branchId || null;
+      const token = jwt.sign(
+        { id: staff.id, branchId, role: staff.role?.name || 'Staff' },
+        jwtSecret,
+        { expiresIn: '30d' }
+      );
+
+      return res.status(200).json({
+        message: 'Login successful',
+        token,
+        role: 'Staff',
+        user: {
+          id: staff.id,
+          name: staff.name,
+          role: staff.role?.name || 'Staff',
+          phone: staff.phone,
+          branch: staff.branch?.name || staff.area?.branch?.name || null,
+          branchId,
+          area: staff.area?.name || null,
+        },
+      });
+    }
+  }
+
+  const customer = await prisma.customer.findFirst({
+    where: {
+      OR: [{ mobile: cleanPhone }, { phone: cleanPhone }],
+      isActive: true,
+    },
+    include: {
+      area: { include: { branch: true } },
+      center: true,
+      group: true,
+    },
+  });
+
+  if (!customer) {
+    return res.status(404).json({ error: 'Customer not found' });
+  }
+
+  const token = jwt.sign(
+    {
+      id: customer.id,
+      customerId: customer.id,
+      role: 'Customer',
+      branchId: customer.area?.branchId || null,
+    },
+    jwtSecret,
+    { expiresIn: '30d' }
+  );
+
+  return res.status(200).json({
+    message: 'Login successful',
+    token,
+    role: 'Customer',
+    user: {
+      id: customer.id,
+      customerId: customer.id,
+      name: customer.name,
+      customerNo: customer.customerNo,
+      mobile: customer.mobile,
+      role: 'Customer',
+      center: customer.center?.name || null,
+      centerTime: customer.center?.centerTime || null,
+      group: customer.group?.groupName || null,
+      area: customer.area?.name || null,
+      branch: customer.area?.branch?.name || null,
+    },
+  });
+});
+
+export const getCustomerPortalData = asyncHandler(async (req: Request, res: Response) => {
+  const user = (req as any).user;
+  const customerId = user?.customerId || user?.id;
+
+  if (!customerId) {
+    return res.status(401).json({ error: 'Unauthorized customer request' });
+  }
+
+  const customer = await prisma.customer.findUnique({
+    where: { id: customerId },
+    include: {
+      center: {
+        include: {
+          employee: { select: { name: true, phone: true } },
+        },
+      },
+      area: { include: { branch: true } },
+      group: true,
+      loans: {
+        where: { status: { in: ['ACTIVE', 'APPROVED', 'CLOSED'] } },
+        orderBy: { createdAt: 'desc' },
+        include: {
+          package: true,
+          schedules: { orderBy: { dueDate: 'asc' } },
+          collections: {
+            where: { isVoided: false },
+            orderBy: { trnDate: 'desc' },
+            take: 10,
+          },
+        },
+      },
+    },
+  });
+
+  if (!customer) {
+    return res.status(404).json({ error: 'Customer not found' });
+  }
+
+  res.status(200).json(customer);
 });

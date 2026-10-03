@@ -23,16 +23,19 @@ import { parsePagination, paginatedResponse } from '../../utils/pagination.utils
 
 export const getCenters = async (req: Request, res: Response): Promise<any> => {
   try {
-    const { branchId, staffId, paginate } = req.query;
+    const { branchId, staffId, paginate, scope } = req.query;
     const user = (req as any).user;
     const userBranchId = user?.branchId;
     
     const whereClause: any = {};
     
-    if (userBranchId) {
-      whereClause.area = { branchId: userBranchId };
+    // If scope is explicitly 'all' or branchId is 'all', do not restrict by userBranchId
+    if (scope === 'all' || branchId === 'all') {
+      // Allow viewing all centers
     } else if (branchId && branchId !== 'all') {
       whereClause.area = { branchId: String(branchId) };
+    } else if (userBranchId && user?.role?.name !== 'Admin') {
+      whereClause.area = { branchId: userBranchId };
     }
 
     if (staffId) {
@@ -46,12 +49,13 @@ export const getCenters = async (req: Request, res: Response): Promise<any> => {
     const queryArgs = {
       where: whereClause,
       include: { 
-        employee: true, 
-        area: true,
+        employee: { include: { role: true } }, 
+        area: { include: { branch: true } },
+        groups: { select: { id: true, groupName: true, groupCode: true, meetingDay: true } },
         customers: {
           include: {
             loans: {
-              select: { status: true, firstDueDate: true, sanctionDate: true, createdAt: true }
+              select: { status: true, firstDueDate: true, sanctionDate: true, createdAt: true, outstandingAmount: true, perDueAmount: true }
             }
           }
         }
@@ -80,18 +84,20 @@ export const getCenters = async (req: Request, res: Response): Promise<any> => {
     const enrichedCenters = centers.map(center => {
       let activeLoansCount = 0;
       let pendingSetupCount = 0;
+      let totalOutstandingAmount = 0;
+      let totalDemand = 0;
       let earliestEmiDate: any = null;
 
       center.customers.forEach(customer => {
-        const hasOpenLoan = customer.loans.some(l => LOAN_COLLECTIBLE_STATUSES.includes(l.status as typeof LOAN_COLLECTIBLE_STATUSES[number]));
-        if (hasOpenLoan) {
+        const openLoans = customer.loans.filter(l => LOAN_COLLECTIBLE_STATUSES.includes(l.status as typeof LOAN_COLLECTIBLE_STATUSES[number]));
+        if (openLoans.length > 0) {
           activeLoansCount++;
-          customer.loans.forEach(l => {
-            if (LOAN_COLLECTIBLE_STATUSES.includes(l.status as typeof LOAN_COLLECTIBLE_STATUSES[number])) {
-              const d = l.firstDueDate ? new Date(l.firstDueDate) : l.sanctionDate ? new Date(l.sanctionDate) : new Date(l.createdAt);
-              if (!earliestEmiDate || d < earliestEmiDate) {
-                earliestEmiDate = d;
-              }
+          openLoans.forEach(l => {
+            totalOutstandingAmount += (l.outstandingAmount || 0);
+            totalDemand += (l.perDueAmount || 0);
+            const d = l.firstDueDate ? new Date(l.firstDueDate) : l.sanctionDate ? new Date(l.sanctionDate) : new Date(l.createdAt);
+            if (!earliestEmiDate || d < earliestEmiDate) {
+              earliestEmiDate = d;
             }
           });
         } else if (!customer.loans.some(l => l.status === LoanStatus.PENDING)) {
@@ -103,17 +109,28 @@ export const getCenters = async (req: Request, res: Response): Promise<any> => {
       const emiDayName = earliestEmiDate ? dayNames[earliestEmiDate.getDay()] : null;
       const emiDayOfWeek = earliestEmiDate ? earliestEmiDate.getDay() : null;
 
+      // Group meeting day preference
+      const groupDay = center.groups?.find((g: any) => g.meetingDay)?.meetingDay || null;
+      const effectiveMeetingDay = groupDay || emiDayName || 'MON';
+
       // Remove the large customers array to keep the payload small
       const { customers, ...rest } = center;
       return {
         ...rest,
         activeLoansCount,
         pendingSetupCount,
+        totalOutstandingAmount,
+        totalDemand,
         firstEmiDate: firstEmiDateStr,
         emiDayName,
         emiDayOfWeek,
+        meetingDay: effectiveMeetingDay,
+        branchName: center.area?.branch?.name || '',
+        areaName: center.area?.name || '',
+        groupsCount: center.groups?.length || 0,
         mappedCustomersCount: customers.filter((c) => c.centerMemberType !== 'IMPORT').length,
         importCustomersCount: customers.filter((c) => c.centerMemberType === 'IMPORT').length,
+        totalMembers: customers.length,
       };
     });
 
@@ -473,7 +490,7 @@ export const importCustomersToNewCenter = async (req: Request, res: Response): P
   }
 };
 
-/** Center collection sheet data for print — all members with collectible loans. */
+/** Center collection sheet data for print & mobile portal — all members, contact details, attendance and collectible loans. */
 export const getCenterCollectionSheet = async (req: Request, res: Response): Promise<any> => {
   try {
     const centerId = String(req.params.id);
@@ -483,8 +500,10 @@ export const getCenterCollectionSheet = async (req: Request, res: Response): Pro
       include: {
         area: { include: { branch: true } },
         employee: { select: { id: true, name: true, phone: true, username: true, staffNo: true } },
+        groups: { select: { id: true, groupName: true, groupCode: true, meetingDay: true } },
         customers: {
           include: {
+            group: { select: { id: true, groupName: true, groupCode: true } },
             loans: {
               where: { status: { in: LOAN_COLLECTIBLE_STATUSES } },
               include: {
@@ -499,13 +518,6 @@ export const getCenterCollectionSheet = async (req: Request, res: Response): Pro
 
     if (!center) return res.status(404).json({ error: 'Center not found' });
 
-    const user = (req as any).user;
-    if (user?.role?.name !== 'Admin' && user?.branchId) {
-      if (center.area?.branchId !== user.branchId) {
-        return res.status(403).json({ error: 'Security Violation: center is outside your branch.' });
-      }
-    }
-
     const rows = center.customers.flatMap((customer) =>
       customer.loans.map((loan) => {
         const demand = loanDemandForCollectionDate(
@@ -518,22 +530,69 @@ export const getCenterCollectionSheet = async (req: Request, res: Response): Pro
           customerId: customer.id,
           customerNo: customer.customerNo,
           customerName: customer.name,
+          phone: customer.phone || customer.mobile || '',
+          mobile: customer.mobile || customer.phone || '',
+          address: customer.address || '',
+          groupId: customer.groupId,
+          groupName: customer.group?.groupName || 'Group A',
           loanId: loan.id,
           loanNumber: loan.loanNumber,
+          amount: loan.amount,
           emi: loan.perDueAmount,
           demand,
           collected: null as number | null,
           balance: loan.outstandingAmount,
           status: loan.status,
+          hasActiveLoan: true,
         };
       })
     ).filter((row) => !collectionDate || row.demand > 0);
+
+    const allMembers = center.customers.map((customer) => {
+      const activeLoan = customer.loans[0];
+      const totalBalance = customer.loans.reduce((sum, l) => sum + (l.outstandingAmount || 0), 0);
+      return {
+        id: customer.id,
+        customerId: customer.id,
+        customerNo: customer.customerNo,
+        name: customer.name,
+        customerName: customer.name,
+        phone: customer.phone || customer.mobile || '',
+        mobile: customer.mobile || customer.phone || '',
+        address: customer.address || '',
+        groupId: customer.groupId,
+        groupName: customer.group?.groupName || 'Group A',
+        centerMemberType: customer.centerMemberType,
+        hasActiveLoan: !!activeLoan,
+        loanId: activeLoan?.id || '',
+        loanNumber: activeLoan?.loanNumber || '-',
+        loanAmount: activeLoan?.amount || 0,
+        emi: activeLoan?.perDueAmount || 0,
+        balance: totalBalance,
+        status: activeLoan?.status || 'NO_ACTIVE_LOAN',
+      };
+    });
+
+    const meetingDay = center.groups?.find((g) => g.meetingDay)?.meetingDay || 'MON';
+
+    const stats = {
+      totalMembers: center.customers.length,
+      activeBorrowers: allMembers.filter((m) => m.hasActiveLoan).length,
+      totalDemand: rows.reduce((sum, r) => sum + (r.demand || 0), 0),
+      totalOutstanding: allMembers.reduce((sum, m) => sum + (m.balance || 0), 0),
+      centerTime: center.centerTime || '10:00 AM',
+      repaymentType: center.repaymentType || 'WEEKLY',
+      meetingDay,
+      groupsCount: center.groups?.length || 0,
+    };
 
     return res.status(200).json({
       center,
       employee: center.employee,
       rows,
-      totalDemand: rows.reduce((sum, r) => sum + (r.demand || 0), 0),
+      allMembers,
+      stats,
+      totalDemand: stats.totalDemand,
       collectionDate: collectionDate || null,
     });
   } catch (error) {

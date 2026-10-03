@@ -62,11 +62,11 @@ app.use(cors({
   origin: (origin, callback) => {
     // Allow requests with no origin (e.g. mobile apps, curl, Postman)
     if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin)) return callback(null, true);
-    // Local dev: any localhost port (Next.js may use 3002, 3003, etc.)
-    if (process.env.NODE_ENV !== 'production' && isLocalDevOrigin(origin)) {
+    // In non-production, allow all LAN / Expo / local dev origins
+    if (process.env.NODE_ENV !== 'production') {
       return callback(null, true);
     }
+    if (allowedOrigins.includes(origin)) return callback(null, true);
     return callback(new Error(`CORS: Origin ${origin} not allowed`));
   },
   credentials: true,
@@ -123,7 +123,7 @@ app.use(errorHandler);
 const PORT = process.env.PORT || 5000;
 
 syncSequencesOnStartup().finally(() => {
-  app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+  app.listen(Number(PORT), '0.0.0.0', () => {
+    console.log(`Server running on port ${PORT} (0.0.0.0)`);
   });
 });
