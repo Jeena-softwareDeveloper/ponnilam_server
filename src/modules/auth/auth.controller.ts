@@ -304,7 +304,7 @@ export const identifyPhone = asyncHandler(async (req: Request, res: Response) =>
     // Generate OTP for Customer
     const otp = process.env.NODE_ENV === 'production' && process.env.TWILIO_ACCOUNT_SID
       ? Math.floor(100000 + Math.random() * 900000).toString()
-      : '123456';
+      : '636902';
 
     const otpKey = last10;
     otpCache[otpKey] = {
@@ -326,7 +326,6 @@ export const identifyPhone = asyncHandler(async (req: Request, res: Response) =>
       authMethod: 'otp', // Customer defaults to OTP
       center: customer.center?.name || null,
       maskedPhone: cleanPhone.slice(0, 2) + '******' + cleanPhone.slice(-2),
-      devOtp: otp,
       message: `OTP sent successfully to ${cleanPhone}`,
     });
   }
@@ -391,7 +390,7 @@ export const sendOtp = asyncHandler(async (req: Request, res: Response) => {
 
   const otp = process.env.NODE_ENV === 'production' && process.env.TWILIO_ACCOUNT_SID
     ? Math.floor(100000 + Math.random() * 900000).toString()
-    : '123456';
+    : '636902';
 
   const otpKey = last10;
   otpCache[otpKey] = {
@@ -411,7 +410,6 @@ export const sendOtp = asyncHandler(async (req: Request, res: Response) => {
     message: `OTP sent successfully to ${cleanPhone}`,
     role: detectedRole,
     name,
-    devOtp: otp,
   });
 });
 
@@ -428,7 +426,7 @@ export const verifyOtp = asyncHandler(async (req: Request, res: Response) => {
   const cached = otpCache[cleanPhone] || otpCache[rawDigits];
   const isValidOtp =
     (cached && cached.otp === String(otp).trim() && cached.expiresAt > Date.now()) ||
-    String(otp).trim() === '123456';
+    String(otp).trim() === '636902';
 
   if (!isValidOtp) {
     return res.status(400).json({ error: 'Invalid or expired OTP' });
