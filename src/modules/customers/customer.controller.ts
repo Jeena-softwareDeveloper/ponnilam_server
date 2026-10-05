@@ -136,26 +136,31 @@ export const createCustomer = asyncHandler(async (req: Request, res: Response) =
 
         kyc: kyc && Object.keys(kyc).length > 0 ? {
           create: {
-            idProof1Type: kyc.idProof1Type,
-            idProof1No: kyc.idProof1No,
-            idProof1Name: kyc.idProof1Name,
+            idProof1Type: kyc.idProof1Type || null,
+            idProof1No: kyc.idProof1No?.trim() || null,
+            idProof1Name: kyc.idProof1Name?.trim() || null,
             idProof1Dob: kyc.idProof1Dob ? new Date(kyc.idProof1Dob) : null,
             idProof1IssueDate: kyc.idProof1IssueDate ? new Date(kyc.idProof1IssueDate) : null,
-            idProof2Type: kyc.idProof2Type,
-            idProof2No: kyc.idProof2No,
-            idProof2Name: kyc.idProof2Name,
+            idProof1FrontImage: kyc.idProof1FrontImage || null,
+            idProof1BackImage: kyc.idProof1BackImage || null,
+            idProof2Type: kyc.idProof2Type || null,
+            idProof2No: kyc.idProof2No?.trim() || null,
+            idProof2Name: kyc.idProof2Name?.trim() || null,
             idProof2Dob: kyc.idProof2Dob ? new Date(kyc.idProof2Dob) : null,
             idProof2IssueDate: kyc.idProof2IssueDate ? new Date(kyc.idProof2IssueDate) : null,
+            idProof2FrontImage: kyc.idProof2FrontImage || null,
+            idProof2BackImage: kyc.idProof2BackImage || null,
           }
         } : undefined,
 
         bank: bank && Object.keys(bank).length > 0 ? {
           create: {
-            accountHolder: bank.accountHolder,
-            accountNumber: bank.accountNumber,
-            ifsc: bank.ifsc,
-            bankName: bank.bankName,
-            branchName: bank.branchName
+            accountHolder: bank.accountHolder || null,
+            accountNumber: bank.accountNumber || null,
+            ifsc: bank.ifsc || null,
+            bankName: bank.bankName || null,
+            branchName: bank.branchName || null,
+            branchAddress: bank.branchAddress || null
           }
         } : undefined
       },
@@ -213,24 +218,26 @@ export const updateCustomer = asyncHandler(async (req: Request, res: Response) =
       requireBranchAccess(user, newArea?.branchId, 'move customer to an area outside your assigned branch');
     }
 
-    if (kyc?.idProof1No) {
+    if (kyc?.idProof1No && kyc.idProof1No.trim()) {
+      const p1 = kyc.idProof1No.trim();
       const existing1 = await prisma.customerKyc.findFirst({
         where: { 
           customerId: { not: String(id) },
-          OR: [{ idProof1No: kyc.idProof1No }, { idProof2No: kyc.idProof1No }] 
+          OR: [{ idProof1No: p1 }, { idProof2No: p1 }] 
         }
       });
-      if (existing1) return res.status(400).json({ error: `Customer with ID Proof Number ${kyc.idProof1No} already exists.` });
+      if (existing1) return res.status(400).json({ error: `Customer with ID Proof Number ${p1} already exists.` });
     }
 
-    if (kyc?.idProof2No) {
+    if (kyc?.idProof2No && kyc.idProof2No.trim()) {
+      const p2 = kyc.idProof2No.trim();
       const existing2 = await prisma.customerKyc.findFirst({
         where: { 
           customerId: { not: String(id) },
-          OR: [{ idProof1No: kyc.idProof2No }, { idProof2No: kyc.idProof2No }] 
+          OR: [{ idProof1No: p2 }, { idProof2No: p2 }] 
         }
       });
-      if (existing2) return res.status(400).json({ error: `Customer with ID Proof Number ${kyc.idProof2No} already exists.` });
+      if (existing2) return res.status(400).json({ error: `Customer with ID Proof Number ${p2} already exists.` });
     }
 
     const updateData: any = {};
@@ -346,28 +353,36 @@ export const updateCustomer = asyncHandler(async (req: Request, res: Response) =
       updateData.kyc = {
         upsert: {
           create: {
-            idProof1Type: kyc.idProof1Type,
-            idProof1No: kyc.idProof1No,
-            idProof1Name: kyc.idProof1Name,
+            idProof1Type: kyc.idProof1Type || null,
+            idProof1No: kyc.idProof1No?.trim() || null,
+            idProof1Name: kyc.idProof1Name?.trim() || null,
             idProof1Dob: kyc.idProof1Dob ? new Date(kyc.idProof1Dob) : null,
             idProof1IssueDate: kyc.idProof1IssueDate ? new Date(kyc.idProof1IssueDate) : null,
-            idProof2Type: kyc.idProof2Type,
-            idProof2No: kyc.idProof2No,
-            idProof2Name: kyc.idProof2Name,
+            idProof1FrontImage: kyc.idProof1FrontImage || null,
+            idProof1BackImage: kyc.idProof1BackImage || null,
+            idProof2Type: kyc.idProof2Type || null,
+            idProof2No: kyc.idProof2No?.trim() || null,
+            idProof2Name: kyc.idProof2Name?.trim() || null,
             idProof2Dob: kyc.idProof2Dob ? new Date(kyc.idProof2Dob) : null,
             idProof2IssueDate: kyc.idProof2IssueDate ? new Date(kyc.idProof2IssueDate) : null,
+            idProof2FrontImage: kyc.idProof2FrontImage || null,
+            idProof2BackImage: kyc.idProof2BackImage || null,
           },
           update: {
-            idProof1Type: kyc.idProof1Type,
-            idProof1No: kyc.idProof1No,
-            idProof1Name: kyc.idProof1Name,
-            idProof1Dob: kyc.idProof1Dob ? new Date(kyc.idProof1Dob) : null,
-            idProof1IssueDate: kyc.idProof1IssueDate ? new Date(kyc.idProof1IssueDate) : null,
-            idProof2Type: kyc.idProof2Type,
-            idProof2No: kyc.idProof2No,
-            idProof2Name: kyc.idProof2Name,
-            idProof2Dob: kyc.idProof2Dob ? new Date(kyc.idProof2Dob) : null,
-            idProof2IssueDate: kyc.idProof2IssueDate ? new Date(kyc.idProof2IssueDate) : null,
+            idProof1Type: kyc.idProof1Type !== undefined ? (kyc.idProof1Type || null) : undefined,
+            idProof1No: kyc.idProof1No !== undefined ? (kyc.idProof1No?.trim() || null) : undefined,
+            idProof1Name: kyc.idProof1Name !== undefined ? (kyc.idProof1Name?.trim() || null) : undefined,
+            idProof1Dob: kyc.idProof1Dob !== undefined ? (kyc.idProof1Dob ? new Date(kyc.idProof1Dob) : null) : undefined,
+            idProof1IssueDate: kyc.idProof1IssueDate !== undefined ? (kyc.idProof1IssueDate ? new Date(kyc.idProof1IssueDate) : null) : undefined,
+            idProof1FrontImage: kyc.idProof1FrontImage !== undefined ? (kyc.idProof1FrontImage || null) : undefined,
+            idProof1BackImage: kyc.idProof1BackImage !== undefined ? (kyc.idProof1BackImage || null) : undefined,
+            idProof2Type: kyc.idProof2Type !== undefined ? (kyc.idProof2Type || null) : undefined,
+            idProof2No: kyc.idProof2No !== undefined ? (kyc.idProof2No?.trim() || null) : undefined,
+            idProof2Name: kyc.idProof2Name !== undefined ? (kyc.idProof2Name?.trim() || null) : undefined,
+            idProof2Dob: kyc.idProof2Dob !== undefined ? (kyc.idProof2Dob ? new Date(kyc.idProof2Dob) : null) : undefined,
+            idProof2IssueDate: kyc.idProof2IssueDate !== undefined ? (kyc.idProof2IssueDate ? new Date(kyc.idProof2IssueDate) : null) : undefined,
+            idProof2FrontImage: kyc.idProof2FrontImage !== undefined ? (kyc.idProof2FrontImage || null) : undefined,
+            idProof2BackImage: kyc.idProof2BackImage !== undefined ? (kyc.idProof2BackImage || null) : undefined,
           }
         }
       };
@@ -377,18 +392,20 @@ export const updateCustomer = asyncHandler(async (req: Request, res: Response) =
       updateData.bank = {
         upsert: {
           create: {
-            accountHolder: bank.accountHolder,
-            accountNumber: bank.accountNumber,
-            ifsc: bank.ifsc,
-            bankName: bank.bankName,
-            branchName: bank.branchName
+            accountHolder: bank.accountHolder || null,
+            accountNumber: bank.accountNumber || null,
+            ifsc: bank.ifsc || null,
+            bankName: bank.bankName || null,
+            branchName: bank.branchName || null,
+            branchAddress: bank.branchAddress || null
           },
           update: {
-            accountHolder: bank.accountHolder,
-            accountNumber: bank.accountNumber,
-            ifsc: bank.ifsc,
-            bankName: bank.bankName,
-            branchName: bank.branchName
+            accountHolder: bank.accountHolder !== undefined ? (bank.accountHolder || null) : undefined,
+            accountNumber: bank.accountNumber !== undefined ? (bank.accountNumber || null) : undefined,
+            ifsc: bank.ifsc !== undefined ? (bank.ifsc || null) : undefined,
+            bankName: bank.bankName !== undefined ? (bank.bankName || null) : undefined,
+            branchName: bank.branchName !== undefined ? (bank.branchName || null) : undefined,
+            branchAddress: bank.branchAddress !== undefined ? (bank.branchAddress || null) : undefined
           }
         }
       };
@@ -416,10 +433,14 @@ export const getCustomers = asyncHandler(async (req: Request, res: Response) => 
     const where: any = {};
     
     if (search) {
+      const s = String(search).trim();
       where.OR = [
-        { name: { contains: String(search) } },
-        { mobile: { contains: String(search) } },
-        { customerNo: { contains: String(search) } }
+        { name: { contains: s } },
+        { mobile: { contains: s } },
+        { customerNo: { contains: s } },
+        { center: { name: { contains: s } } },
+        { area: { name: { contains: s } } },
+        { coApplicant: { name: { contains: s } } },
       ];
     }
     
@@ -467,6 +488,7 @@ export const getCustomers = asyncHandler(async (req: Request, res: Response) => 
           coApplicant: true,
         },
         orderBy: [
+          { updatedAt: 'desc' },
           { createdAt: 'desc' },
           { customerNo: 'desc' }
         ],
@@ -615,3 +637,49 @@ export const toggleCustomerStatus = asyncHandler(async (req: Request, res: Respo
     });
     res.json({ message: `Customer ${updated.isActive ? 'activated' : 'deactivated'} successfully`, isActive: updated.isActive });
 });
+
+export const uploadKycDoc = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No image file uploaded' });
+  }
+  const file = req.file;
+  const isKyc = file.destination.replace(/\\/g, '/').includes('kyc');
+  const url = isKyc ? `/uploads/kyc/${file.filename}` : `/uploads/${file.filename}`;
+  res.json({
+    url,
+    filename: file.filename,
+    originalName: file.originalname,
+    size: file.size,
+    mimetype: file.mimetype
+  });
+});
+
+export const lookupIfsc = asyncHandler(async (req: Request, res: Response) => {
+  const { code } = req.params;
+  const raw = String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  let target = raw;
+  if (target.length >= 5 && target[4] === 'O') {
+    target = target.slice(0, 4) + '0' + target.slice(5);
+  }
+  const match = target.match(/^([A-Z]{4})0*([0-9]+)$/);
+  if (match) {
+    const bankPrefix = match[1];
+    const branchDigits = match[2];
+    if (branchDigits.length <= 6) {
+      target = bankPrefix + '0' + branchDigits.padStart(6, '0');
+    }
+  }
+
+  try {
+    const response = await fetch(`https://ifsc.razorpay.com/${target}`);
+    if (!response.ok) {
+      return res.status(404).json({ error: 'IFSC code not found' });
+    }
+    const data = await response.json();
+    return res.json({ ...data, IFSC: target });
+  } catch (err: any) {
+    return res.status(502).json({ error: 'Failed to connect to IFSC service' });
+  }
+});
+
+

@@ -74,6 +74,7 @@ model Branch {
   notifications Notification[]
   activities    Activity[]
   activityCategories ActivityCategory[]
+  staffEntries  StaffEntry[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -117,6 +118,8 @@ model Center {
 
   groups    Group[]
   customers Customer[]
+  loans     Loan[]
+  staffEntries StaffEntry[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -197,6 +200,8 @@ model Staff {
   centers       Center[]
   customers     Customer[]
   collections   Collection[]
+  submittedStaffEntries StaffEntry[] @relation("StaffSubmittedEntries")
+  confirmedStaffEntries StaffEntry[] @relation("StaffConfirmedEntries")
   auditLogs     AuditLog[]
   notifications Notification[]
 
@@ -299,6 +304,7 @@ model Customer {
   bank            CustomerBank?
   loans           Loan[]
   customerLedgers CustomerLedger[]
+  staffEntries    StaffEntry[]
 
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
@@ -313,17 +319,21 @@ model Customer {
 model CustomerKyc {
   id String @id @default(uuid())
 
-  idProof1Type      String?
-  idProof1No        String?
-  idProof1Name      String?
-  idProof1Dob       DateTime?
-  idProof1IssueDate DateTime?
+  idProof1Type       String?
+  idProof1No         String?
+  idProof1Name       String?
+  idProof1Dob        DateTime?
+  idProof1IssueDate  DateTime?
+  idProof1FrontImage String?
+  idProof1BackImage  String?
 
-  idProof2Type      String?
-  idProof2No        String?
-  idProof2Name      String?
-  idProof2Dob       DateTime?
-  idProof2IssueDate DateTime?
+  idProof2Type       String?
+  idProof2No         String?
+  idProof2Name       String?
+  idProof2Dob        DateTime?
+  idProof2IssueDate  DateTime?
+  idProof2FrontImage String?
+  idProof2BackImage  String?
 
   customerId String   @unique
   customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
@@ -339,6 +349,7 @@ model CustomerBank {
   ifsc          String?
   bankName      String?
   branchName    String?
+  branchAddress String?
 
   customerId String   @unique
   customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
@@ -412,6 +423,9 @@ model Loan {
   customerId String
   customer   Customer @relation(fields: [customerId], references: [id])
 
+  centerId String?
+  center   Center?  @relation(fields: [centerId], references: [id], onDelete: SetNull)
+
   staffId String
   staff   Staff  @relation(fields: [staffId], references: [id])
 
@@ -419,11 +433,13 @@ model Loan {
   collections Collection[]
   guarantors  LoanGuarantor[]
   loanLedgers LoanLedger[]
+  staffEntries StaffEntry[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([customerId])
+  @@index([centerId])
   @@index([status])
   @@index([packageId])
   @@index([staffId])
@@ -484,6 +500,51 @@ model Collection {
   @@index([staffId])
   @@index([trnDate, loanId])
   @@index([collectionDay])
+}
+
+// ==========================================
+// Field Staff Collection Waiting List
+// ==========================================
+
+model StaffEntry {
+  id              String    @id @default(uuid())
+  batchId         String
+  trnDate         DateTime
+  amount          Float
+  remarks         String?
+  status          String    @default("PENDING") // PENDING | CONFIRMED | REJECTED
+  rejectionReason String?
+
+  loanId          String
+  loan            Loan      @relation(fields: [loanId], references: [id], onDelete: Cascade)
+
+  customerId      String?
+  customer        Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  centerId        String
+  center          Center    @relation(fields: [centerId], references: [id], onDelete: Cascade)
+
+  branchId        String
+  branch          Branch    @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  staffId         String
+  staff           Staff     @relation("StaffSubmittedEntries", fields: [staffId], references: [id])
+
+  confirmedById   String?
+  confirmedBy     Staff?    @relation("StaffConfirmedEntries", fields: [confirmedById], references: [id])
+  confirmedAt     DateTime?
+
+  collectionId    String?
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([branchId, status])
+  @@index([staffId, status])
+  @@index([centerId, status])
+  @@index([batchId])
+  @@index([loanId])
+  @@index([trnDate])
 }
 
 // ==========================================

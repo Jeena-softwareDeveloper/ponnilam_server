@@ -6,6 +6,23 @@ import { NotificationType, NotificationStatus } from '../../utils/prisma-enums';
 import { asyncHandler } from '../../utils/asyncHandler';
 
 
+function getPhoneSearchVariants(input: string): string[] {
+  const raw = String(input || '').trim();
+  const digitsOnly = raw.replace(/\D/g, '');
+  const last10 = digitsOnly.slice(-10);
+
+  const variants = new Set<string>();
+  if (raw) variants.add(raw);
+  if (digitsOnly) variants.add(digitsOnly);
+  if (last10 && last10.length === 10) {
+    variants.add(last10);
+    variants.add(`+91${last10}`);
+    variants.add(`91${last10}`);
+    variants.add(`0${last10}`);
+  }
+  return Array.from(variants).filter(Boolean);
+}
+
 export const login = asyncHandler(async (req: Request, res: Response) => {
   const { username, password } = req.body;
 
@@ -13,14 +30,14 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'Username and password are required' });
   }
 
-  const cleanUser = String(username || '').trim().replace(/\D/g, '');
+  const phoneVariants = getPhoneSearchVariants(username);
   const staff = await prisma.staff.findFirst({
     where: {
       OR: [
-        { phone: username },
-        ...(cleanUser ? [{ phone: cleanUser }, { phone: `+91${cleanUser}` }] : []),
         { email: username },
-        { username: username }
+        { username: username },
+        ...phoneVariants.map(p => ({ phone: p })),
+        ...phoneVariants.map(p => ({ username: p }))
       ]
     },
     include: { role: true, branch: true, area: { include: { branch: true } } }
@@ -238,19 +255,22 @@ const otpCache: Record<string, { otp: string; expiresAt: number; role?: string; 
 
 export const identifyPhone = asyncHandler(async (req: Request, res: Response) => {
   const { phone } = req.body;
-  const cleanPhone = String(phone || '').trim().replace(/\D/g, '');
+  const rawDigits = String(phone || '').trim().replace(/\D/g, '');
+  const last10 = rawDigits.slice(-10);
 
-  if (!cleanPhone || cleanPhone.length < 10) {
+  if (!last10 || last10.length < 10) {
     return res.status(400).json({ error: 'Valid 10-digit mobile number is required' });
   }
+
+  const phoneVariants = getPhoneSearchVariants(phone);
+  const cleanPhone = last10;
 
   // 1. Check Staff
   const staff = await prisma.staff.findFirst({
     where: {
       OR: [
-        { phone: cleanPhone },
-        { phone: `+91${cleanPhone}` },
-        { username: cleanPhone },
+        ...phoneVariants.map(p => ({ phone: p })),
+        ...phoneVariants.map(p => ({ username: p }))
       ],
       isActive: true,
     },
@@ -272,8 +292,8 @@ export const identifyPhone = asyncHandler(async (req: Request, res: Response) =>
   const customer = await prisma.customer.findFirst({
     where: {
       OR: [
-        { mobile: cleanPhone },
-        { phone: cleanPhone },
+        ...phoneVariants.map(p => ({ mobile: p })),
+        ...phoneVariants.map(p => ({ phone: p }))
       ],
       isActive: true,
     },
@@ -286,12 +306,16 @@ export const identifyPhone = asyncHandler(async (req: Request, res: Response) =>
       ? Math.floor(100000 + Math.random() * 900000).toString()
       : '123456';
 
-    otpCache[cleanPhone] = {
+    const otpKey = last10;
+    otpCache[otpKey] = {
       otp,
       expiresAt: Date.now() + 10 * 60 * 1000,
       role: 'Customer',
       entityId: customer.id,
     };
+    if (rawDigits !== otpKey) {
+      otpCache[rawDigits] = otpCache[otpKey];
+    }
 
     console.log(`[OTP] Generated OTP ${otp} for Customer ${customer.name} (${cleanPhone})`);
 
@@ -315,11 +339,15 @@ export const identifyPhone = asyncHandler(async (req: Request, res: Response) =>
 
 export const sendOtp = asyncHandler(async (req: Request, res: Response) => {
   const { phone, role } = req.body;
-  const cleanPhone = String(phone || '').trim().replace(/\D/g, '');
+  const rawDigits = String(phone || '').trim().replace(/\D/g, '');
+  const last10 = rawDigits.slice(-10);
 
-  if (!cleanPhone || cleanPhone.length < 10) {
+  if (!last10 || last10.length < 10) {
     return res.status(400).json({ error: 'Valid 10-digit mobile number is required' });
   }
+
+  const phoneVariants = getPhoneSearchVariants(phone);
+  const cleanPhone = last10;
 
   let foundStaff: any = null;
   let foundCustomer: any = null;
@@ -327,7 +355,10 @@ export const sendOtp = asyncHandler(async (req: Request, res: Response) => {
   if (role === 'Staff' || !role) {
     foundStaff = await prisma.staff.findFirst({
       where: {
-        OR: [{ phone: cleanPhone }, { phone: `+91${cleanPhone}` }, { username: cleanPhone }],
+        OR: [
+          ...phoneVariants.map(p => ({ phone: p })),
+          ...phoneVariants.map(p => ({ username: p }))
+        ],
         isActive: true,
       },
       include: { role: true, branch: true, area: { include: { branch: true } } },
@@ -337,7 +368,10 @@ export const sendOtp = asyncHandler(async (req: Request, res: Response) => {
   if (role === 'Customer' || (!foundStaff && !role)) {
     foundCustomer = await prisma.customer.findFirst({
       where: {
-        OR: [{ mobile: cleanPhone }, { phone: cleanPhone }],
+        OR: [
+          ...phoneVariants.map(p => ({ mobile: p })),
+          ...phoneVariants.map(p => ({ phone: p }))
+        ],
         isActive: true,
       },
       include: { area: true, center: true },
@@ -359,12 +393,16 @@ export const sendOtp = asyncHandler(async (req: Request, res: Response) => {
     ? Math.floor(100000 + Math.random() * 900000).toString()
     : '123456';
 
-  otpCache[cleanPhone] = {
+  const otpKey = last10;
+  otpCache[otpKey] = {
     otp,
     expiresAt: Date.now() + 10 * 60 * 1000,
     role: detectedRole,
     entityId,
   };
+  if (rawDigits !== otpKey) {
+    otpCache[rawDigits] = otpCache[otpKey];
+  }
 
   console.log(`[OTP] Generated OTP ${otp} for ${detectedRole} ${name} (${cleanPhone})`);
 
@@ -379,13 +417,15 @@ export const sendOtp = asyncHandler(async (req: Request, res: Response) => {
 
 export const verifyOtp = asyncHandler(async (req: Request, res: Response) => {
   const { phone, otp, role } = req.body;
-  const cleanPhone = String(phone || '').trim().replace(/\D/g, '');
+  const rawDigits = String(phone || '').trim().replace(/\D/g, '');
+  const last10 = rawDigits.slice(-10);
 
-  if (!cleanPhone || !otp) {
+  if (!rawDigits || !otp) {
     return res.status(400).json({ error: 'Phone number and OTP are required' });
   }
 
-  const cached = otpCache[cleanPhone];
+  const cleanPhone = last10.length === 10 ? last10 : rawDigits;
+  const cached = otpCache[cleanPhone] || otpCache[rawDigits];
   const isValidOtp =
     (cached && cached.otp === String(otp).trim() && cached.expiresAt > Date.now()) ||
     String(otp).trim() === '123456';
@@ -395,13 +435,18 @@ export const verifyOtp = asyncHandler(async (req: Request, res: Response) => {
   }
 
   delete otpCache[cleanPhone];
+  delete otpCache[rawDigits];
 
+  const phoneVariants = getPhoneSearchVariants(phone);
   const jwtSecret = process.env.JWT_SECRET || 'supersecret_jwt_key_for_local_dev';
 
   if (role === 'Staff' || cached?.role === 'Staff') {
     const staff = await prisma.staff.findFirst({
       where: {
-        OR: [{ phone: cleanPhone }, { phone: `+91${cleanPhone}` }, { username: cleanPhone }],
+        OR: [
+          ...phoneVariants.map(p => ({ phone: p })),
+          ...phoneVariants.map(p => ({ username: p }))
+        ],
         isActive: true,
       },
       include: { role: true, branch: true, area: { include: { branch: true } } },
@@ -434,7 +479,10 @@ export const verifyOtp = asyncHandler(async (req: Request, res: Response) => {
 
   const customer = await prisma.customer.findFirst({
     where: {
-      OR: [{ mobile: cleanPhone }, { phone: cleanPhone }],
+      OR: [
+        ...phoneVariants.map(p => ({ mobile: p })),
+        ...phoneVariants.map(p => ({ phone: p }))
+      ],
       isActive: true,
     },
     include: {
@@ -502,14 +550,16 @@ export const getCustomerPortalData = asyncHandler(async (req: Request, res: Resp
         orderBy: { createdAt: 'desc' },
         include: {
           package: true,
+          center: { select: { id: true, name: true, code: true } },
           schedules: { orderBy: { dueDate: 'asc' } },
           collections: {
             where: { isVoided: false },
             orderBy: { trnDate: 'desc' },
-            take: 10,
           },
+          loanLedgers: { orderBy: { date: 'desc' } },
         },
       },
+      customerLedgers: { orderBy: { date: 'desc' } },
     },
   });
 

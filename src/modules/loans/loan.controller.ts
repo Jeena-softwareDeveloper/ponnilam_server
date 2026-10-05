@@ -17,7 +17,7 @@ import { assertMenuPermission, checkAreaScope, resolveStaffId } from '../../util
 
 export const createLoan = asyncHandler(async (req: Request, res: Response) => {
   const {
-    customerId, staffId, amount, noOfDues, perDueAmount, totalDueAmount,
+    customerId, staffId, centerId, amount, noOfDues, perDueAmount, totalDueAmount,
     deductionAmount, netDisbursement,
     salary, interest, additional, otherIncome, totalIncome,
     food, rent, mobile, education, loanObligation, otherExpense, totalExpense,
@@ -88,6 +88,7 @@ export const createLoan = asyncHandler(async (req: Request, res: Response) => {
       data: {
         loanNumber,
         customerId,
+        centerId: centerId || customer.centerId,
         staffId: resolvedStaffId,
         amount: Number(amount),
         interestRate: resolvedInterestRate,
@@ -318,6 +319,7 @@ export const updateLoanStatus = asyncHandler(async (req: Request, res: Response)
 export const getLoans = asyncHandler(async (req: Request, res: Response) => {
   const { customerId, status, branchId, centerId, search } = req.query;
   const where: any = {};
+  const andConditions: any[] = [];
   if (customerId) where.customerId = String(customerId);
   if (status) {
     const statuses = String(status).split(',').map((s) => s.trim());
@@ -325,15 +327,26 @@ export const getLoans = asyncHandler(async (req: Request, res: Response) => {
   }
 
   if (centerId) {
-    where.customer = { ...where.customer, centerId: String(centerId) };
+    andConditions.push({
+      OR: [
+        { centerId: String(centerId) },
+        { customer: { centerId: String(centerId) } },
+      ],
+    });
   }
 
   if (search) {
-    where.OR = [
-      { loanNumber: { contains: String(search) } },
-      { customer: { name: { contains: String(search) } } },
-      { customer: { customerNo: { contains: String(search) } } },
-    ];
+    andConditions.push({
+      OR: [
+        { loanNumber: { contains: String(search) } },
+        { customer: { name: { contains: String(search) } } },
+        { customer: { customerNo: { contains: String(search) } } },
+      ],
+    });
+  }
+
+  if (andConditions.length > 0) {
+    where.AND = andConditions;
   }
 
   const user = (req as any).user;
@@ -354,10 +367,12 @@ export const getLoans = asyncHandler(async (req: Request, res: Response) => {
       where,
       include: {
         customer: { include: { area: { include: { branch: true } }, center: true } },
+        center: true,
         staff: true,
         schedules: { orderBy: { dueDate: 'asc' } },
       },
       orderBy: [
+        { updatedAt: 'desc' },
         { createdAt: 'desc' },
         { loanNumber: 'desc' }
       ],
@@ -374,6 +389,7 @@ export const getLoanById = asyncHandler(async (req: Request, res: Response) => {
   const loan = await prisma.loan.findUnique({
     where: { id: String(id) },
     include: {
+      center: true,
       customer: {
         include: {
           center: {

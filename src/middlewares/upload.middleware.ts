@@ -4,12 +4,16 @@ import path from 'path';
 
 // Ensure upload directories exist
 const activitiesUploadDir = path.join(process.cwd(), 'public', 'uploads', 'activities');
+const kycUploadDir = path.join(process.cwd(), 'public', 'uploads', 'kyc');
 fs.mkdirSync(activitiesUploadDir, { recursive: true });
+fs.mkdirSync(kycUploadDir, { recursive: true });
 
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
     if (file.fieldname === 'photo' || file.fieldname === 'photos') {
       cb(null, activitiesUploadDir);
+    } else if (file.fieldname.toLowerCase().includes('kyc') || req.originalUrl?.includes('kyc') || req.baseUrl?.includes('customer')) {
+      cb(null, kycUploadDir);
     } else {
       cb(null, path.join(process.cwd(), 'public', 'uploads'));
     }

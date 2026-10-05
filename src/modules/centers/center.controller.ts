@@ -2,7 +2,8 @@ import { Request, Response } from 'express';
 import prisma from '../../utils/prisma';
 import { LOAN_COLLECTIBLE_STATUSES, LoanStatus, OPEN_LOAN_STATUSES } from '../../utils/prisma-enums';
 import { countCenterMembers } from '../../utils/center-member.utils';
-import { loanDemandForCollectionDate } from '../../utils/loan.utils';
+import { loanDemandForCollectionDate, handleManualLoanClose } from '../../utils/loan.utils';
+import { toCollectionDay } from '../../utils/date.utils';
 
 function sortCustomersByRegistration<
   T extends { createdAt?: Date | string | null; customerNo?: string | null },
@@ -21,9 +22,11 @@ import { allocateCenterShortCode } from '../../utils/center-short-code.service';
 const MENU_PATH = '/admin/masters/centers';
 import { parsePagination, paginatedResponse } from '../../utils/pagination.utils';
 
+const DAY_NAMES = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+
 export const getCenters = async (req: Request, res: Response): Promise<any> => {
   try {
-    const { branchId, staffId, paginate, scope } = req.query;
+    const { branchId, staffId, paginate, scope, onlyActive } = req.query;
     const user = (req as any).user;
     const userBranchId = user?.branchId;
     
@@ -40,6 +43,8 @@ export const getCenters = async (req: Request, res: Response): Promise<any> => {
 
     if (staffId) {
       whereClause.employeeId = String(staffId);
+    } else if (user?.role?.name === 'Collection Staff' && user?.id) {
+      whereClause.employeeId = user.id;
     }
     
     let centers;
@@ -60,7 +65,10 @@ export const getCenters = async (req: Request, res: Response): Promise<any> => {
           }
         }
       },
-      orderBy: { code: 'asc' } as any,
+      orderBy: [
+        { createdAt: 'desc' },
+        { code: 'asc' }
+      ] as any,
     };
 
     if (paginate === 'true') {
@@ -80,6 +88,50 @@ export const getCenters = async (req: Request, res: Response): Promise<any> => {
     }
 
     const dayNames = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+
+    // Query pending staff entries for these centers
+    const centerIds = centers.map((c) => c.id);
+    const pendingStaffEntries = await prisma.staffEntry.findMany({
+      where: {
+        centerId: { in: centerIds },
+        status: 'PENDING',
+      },
+      select: {
+        centerId: true,
+        amount: true,
+      },
+    });
+    const pendingMap = new Map<string, { count: number; amount: number }>();
+    for (const pe of pendingStaffEntries) {
+      const cur = pendingMap.get(pe.centerId) || { count: 0, amount: 0 };
+      cur.count += 1;
+      cur.amount += pe.amount;
+      pendingMap.set(pe.centerId, cur);
+    }
+
+    // Query non-voided collections created today for these centers
+    const todayStr = toCollectionDay(new Date());
+    const todayCollections = await prisma.collection.findMany({
+      where: {
+        loan: { centerId: { in: centerIds } },
+        collectionDay: todayStr,
+        isVoided: false,
+      },
+      select: {
+        amount: true,
+        loan: { select: { centerId: true } },
+      },
+    });
+
+    const confirmedMap = new Map<string, { count: number; amount: number }>();
+    for (const tc of todayCollections) {
+      const cId = tc.loan?.centerId;
+      if (!cId) continue;
+      const cur = confirmedMap.get(cId) || { count: 0, amount: 0 };
+      cur.count += 1;
+      cur.amount += tc.amount;
+      confirmedMap.set(cId, cur);
+    }
 
     const enrichedCenters = centers.map(center => {
       let activeLoansCount = 0;
@@ -113,6 +165,15 @@ export const getCenters = async (req: Request, res: Response): Promise<any> => {
       const groupDay = center.groups?.find((g: any) => g.meetingDay)?.meetingDay || null;
       const effectiveMeetingDay = groupDay || emiDayName || 'MON';
 
+      // Pending staff collection info
+      const pInfo = pendingMap.get(center.id);
+
+      // Confirmed collections today
+      const cInfo = confirmedMap.get(center.id);
+      const todayConfirmedCount = cInfo?.count || 0;
+      const todayConfirmedTotal = cInfo?.amount || 0;
+      const isPaidToday = activeLoansCount > 0 && todayConfirmedCount >= activeLoansCount;
+
       // Remove the large customers array to keep the payload small
       const { customers, ...rest } = center;
       return {
@@ -131,13 +192,25 @@ export const getCenters = async (req: Request, res: Response): Promise<any> => {
         mappedCustomersCount: customers.filter((c) => c.centerMemberType !== 'IMPORT').length,
         importCustomersCount: customers.filter((c) => c.centerMemberType === 'IMPORT').length,
         totalMembers: customers.length,
+        hasPendingSubmission: Boolean(pInfo && pInfo.count > 0),
+        pendingSubmissionCount: pInfo?.count || 0,
+        pendingSubmissionTotal: pInfo?.amount || 0,
+        isPaidToday,
+        todayConfirmedCount,
+        todayConfirmedTotal,
+        hasTodayConfirmed: todayConfirmedCount > 0,
       };
     });
 
+    const shouldFilterActive = onlyActive === 'true' || user?.role?.name === 'Collection Staff';
+    const finalCenters = shouldFilterActive
+      ? enrichedCenters.filter((c) => (c.activeLoansCount || 0) > 0)
+      : enrichedCenters;
+
     if (paginate === 'true') {
-      return res.status(200).json(paginatedResponse(enrichedCenters, total, page, limit));
+      return res.status(200).json(paginatedResponse(finalCenters, finalCenters.length, page, limit));
     }
-    return res.status(200).json(enrichedCenters);
+    return res.status(200).json(finalCenters);
   } catch (error) {
     console.error('Error fetching centers:', error);
     return res.status(500).json({ error: 'Internal server error' });
@@ -406,8 +479,8 @@ export const importCustomersToNewCenter = async (req: Request, res: Response): P
       where: { id: sourceCenterId },
       include: {
         area: { include: { branch: true } },
+        groups: { select: { meetingDay: true } },
         customers: {
-          where: { centerMemberType: { not: 'IMPORT' } },
           include: { loans: { select: { status: true } } },
         },
       },
@@ -422,7 +495,8 @@ export const importCustomersToNewCenter = async (req: Request, res: Response): P
       }
     }
 
-    const eligible = sourceCenter.customers;
+    const primary = sourceCenter.customers.filter((c) => c.centerMemberType !== 'IMPORT');
+    const eligible = primary.length > 0 ? primary : sourceCenter.customers;
 
     let idsToImport: string[] = [];
     if (customerIds?.length) {
@@ -455,20 +529,42 @@ export const importCustomersToNewCenter = async (req: Request, res: Response): P
           centerTime: sourceCenter.centerTime,
           repaymentType: sourceCenter.repaymentType,
           disbursMode: sourceCenter.disbursMode,
-          totalMembers: sourceCenter.totalMembers || 0,
+          totalMembers: idsToImport.length,
           areaId: sourceCenter.areaId,
           employeeId: sourceCenter.employeeId,
         },
         include: { employee: true, area: true },
       });
 
+      const sourceMeetingDay = sourceCenter.groups?.find((g: any) => g.meetingDay)?.meetingDay || null;
       const defaultGroup = await tx.group.create({
         data: {
           centerId: newCenter.id,
           groupName: 'Group 1',
           groupCode: `${groupCodePrefix}-G1`,
+          meetingDay: sourceMeetingDay,
         },
       });
+
+      // Auto-close open loans from previous cycle for all customers being transferred
+      const previousOpenLoans = await tx.loan.findMany({
+        where: {
+          customerId: { in: idsToImport },
+          status: { in: OPEN_LOAN_STATUSES },
+        },
+      });
+
+      for (const loan of previousOpenLoans) {
+        await handleManualLoanClose(tx, loan.id, loan.customerId, new Date());
+        await tx.loan.update({
+          where: { id: loan.id },
+          data: {
+            status: LoanStatus.CLOSED,
+            remarks: (loan.remarks ? loan.remarks + ' | ' : '') + `Auto-closed on transfer to ${newCenterName.trim()}`,
+            updatedAt: new Date(),
+          },
+        });
+      }
 
       await tx.customer.updateMany({
         where: { id: { in: idsToImport } },
@@ -476,6 +572,16 @@ export const importCustomersToNewCenter = async (req: Request, res: Response): P
           centerId: newCenter.id,
           centerMemberType: 'IMPORT',
           groupId: defaultGroup.id,
+          updatedAt: new Date(),
+        },
+      });
+
+      // Update source center totalMembers
+      await tx.center.update({
+        where: { id: sourceCenter.id },
+        data: {
+          totalMembers: Math.max(0, (sourceCenter.totalMembers || 0) - idsToImport.length),
+          updatedAt: new Date(),
         },
       });
 
@@ -518,14 +624,64 @@ export const getCenterCollectionSheet = async (req: Request, res: Response): Pro
 
     if (!center) return res.status(404).json({ error: 'Center not found' });
 
+    const targetDay = toCollectionDay(collectionDate || new Date());
+    const centerLoanIds = center.customers.flatMap((c) => c.loans.map((l) => l.id));
+
+    // Query non-voided collections already recorded for this center's loans on targetDay
+    const todayCollections = await prisma.collection.findMany({
+      where: {
+        loanId: { in: centerLoanIds },
+        collectionDay: targetDay,
+        isVoided: false,
+      },
+      select: {
+        id: true,
+        loanId: true,
+        trnNumber: true,
+        amount: true,
+        trnDate: true,
+        createdAt: true,
+      },
+    });
+    const todayCollectionMap = new Map(todayCollections.map((c) => [c.loanId, c]));
+
+    // Query pending staff entries for this center
+    const pendingStaffEntries = await prisma.staffEntry.findMany({
+      where: {
+        centerId,
+        status: 'PENDING',
+      },
+      select: {
+        id: true,
+        loanId: true,
+        amount: true,
+        status: true,
+        createdAt: true,
+        trnDate: true,
+        staff: { select: { id: true, name: true } },
+      },
+    });
+    const pendingMap = new Map(pendingStaffEntries.map((p) => [p.loanId, p]));
+    const totalPendingSubmitted = pendingStaffEntries.reduce((sum, e) => sum + e.amount, 0);
+    const pendingSubmittedCount = pendingStaffEntries.length;
+    const totalTodayConfirmed = todayCollections.reduce((sum, c) => sum + c.amount, 0);
+    const todayConfirmedCount = todayCollections.length;
+
     const rows = center.customers.flatMap((customer) =>
       customer.loans.map((loan) => {
-        const demand = loanDemandForCollectionDate(
-          loan.schedules || [],
-          collectionDate,
-          loan.perDueAmount,
-          loan.outstandingAmount
-        );
+        const todayCol = todayCollectionMap.get(loan.id);
+        const isCollectedToday = Boolean(todayCol);
+        const pending = pendingMap.get(loan.id);
+
+        const demand = isCollectedToday
+          ? 0
+          : loanDemandForCollectionDate(
+              loan.schedules || [],
+              collectionDate,
+              loan.perDueAmount,
+              loan.outstandingAmount
+            );
+
         return {
           customerId: customer.id,
           customerNo: customer.customerNo,
@@ -540,15 +696,26 @@ export const getCenterCollectionSheet = async (req: Request, res: Response): Pro
           amount: loan.amount,
           emi: loan.perDueAmount,
           demand,
-          collected: null as number | null,
+          collected: isCollectedToday
+            ? todayCol?.amount
+            : (pending ? pending.amount : null),
+          isCollectedToday,
+          todayCollectionAmount: todayCol?.amount || null,
+          todayTrnNumber: todayCol?.trnNumber || null,
+          isSubmittedPending: Boolean(pending),
+          pendingEntryId: pending?.id || null,
+          pendingSubmittedAmount: pending?.amount || null,
+          pendingSubmittedAt: pending?.createdAt || null,
+          pendingStaffName: pending?.staff?.name || null,
           balance: loan.outstandingAmount,
           status: loan.status,
           hasActiveLoan: true,
         };
       })
-    ).filter((row) => !collectionDate || row.demand > 0);
+    ).filter((row) => !collectionDate || row.demand > 0 || row.isCollectedToday || row.isSubmittedPending);
 
-    const allMembers = center.customers.map((customer) => {
+    const activeBorrowerCustomers = center.customers.filter((customer) => (customer.loans || []).length > 0);
+    const allMembers = activeBorrowerCustomers.map((customer) => {
       const activeLoan = customer.loans[0];
       const totalBalance = customer.loans.reduce((sum, l) => sum + (l.outstandingAmount || 0), 0);
       return {
@@ -563,28 +730,61 @@ export const getCenterCollectionSheet = async (req: Request, res: Response): Pro
         groupId: customer.groupId,
         groupName: customer.group?.groupName || 'Group A',
         centerMemberType: customer.centerMemberType,
-        hasActiveLoan: !!activeLoan,
-        loanId: activeLoan?.id || '',
-        loanNumber: activeLoan?.loanNumber || '-',
-        loanAmount: activeLoan?.amount || 0,
-        emi: activeLoan?.perDueAmount || 0,
+        hasActiveLoan: true,
+        loanId: activeLoan.id,
+        loanNumber: activeLoan.loanNumber,
+        loanAmount: activeLoan.amount,
+        emi: activeLoan.perDueAmount,
         balance: totalBalance,
-        status: activeLoan?.status || 'NO_ACTIVE_LOAN',
+        status: activeLoan.status,
       };
     });
 
-    const meetingDay = center.groups?.find((g) => g.meetingDay)?.meetingDay || 'MON';
+    let derivedMeetingDay = center.groups?.find((g) => g.meetingDay)?.meetingDay || null;
+    let earliestDate: Date | null = null;
+    for (const customer of center.customers) {
+      for (const loan of customer.loans) {
+        const d = loan.firstDueDate ? new Date(loan.firstDueDate) : loan.sanctionDate ? new Date(loan.sanctionDate) : new Date(loan.createdAt);
+        if (!isNaN(d.getTime())) {
+          if (!earliestDate || d < earliestDate) {
+            earliestDate = d;
+          }
+        }
+      }
+    }
+    if (!derivedMeetingDay && earliestDate) {
+      derivedMeetingDay = DAY_NAMES[earliestDate.getDay()];
+    }
+    const meetingDay = derivedMeetingDay || 'MON';
 
     const stats = {
-      totalMembers: center.customers.length,
-      activeBorrowers: allMembers.filter((m) => m.hasActiveLoan).length,
+      totalMembers: allMembers.length,
+      activeBorrowers: allMembers.length,
       totalDemand: rows.reduce((sum, r) => sum + (r.demand || 0), 0),
       totalOutstanding: allMembers.reduce((sum, m) => sum + (m.balance || 0), 0),
       centerTime: center.centerTime || '10:00 AM',
       repaymentType: center.repaymentType || 'WEEKLY',
       meetingDay,
+      emiDayName: derivedMeetingDay,
+      firstEmiDate: earliestDate ? earliestDate.toISOString().slice(0, 10) : null,
       groupsCount: center.groups?.length || 0,
+      hasPendingSubmission: pendingStaffEntries.length > 0,
+      pendingSubmittedTotal: totalPendingSubmitted,
+      pendingSubmittedCount,
+      hasTodayConfirmed: todayCollections.length > 0,
+      todayConfirmedTotal: totalTodayConfirmed,
+      todayConfirmedCount,
     };
+
+    (center as any).meetingDay = meetingDay;
+    (center as any).emiDayName = derivedMeetingDay;
+    (center as any).firstEmiDate = earliestDate ? earliestDate.toISOString().slice(0, 10) : null;
+    (center as any).hasPendingSubmission = pendingStaffEntries.length > 0;
+    (center as any).pendingSubmittedTotal = totalPendingSubmitted;
+    (center as any).pendingSubmittedCount = pendingSubmittedCount;
+    (center as any).hasTodayConfirmed = todayCollections.length > 0;
+    (center as any).todayConfirmedTotal = totalTodayConfirmed;
+    (center as any).todayConfirmedCount = todayConfirmedCount;
 
     return res.status(200).json({
       center,

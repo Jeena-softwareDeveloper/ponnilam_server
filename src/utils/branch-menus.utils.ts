@@ -6,6 +6,7 @@ const BRANCH_MANAGER_MENU_PATHS = [
   '/admin/customer-ledger',
   '/admin/loans',
   '/admin/collections',
+  '/admin/collections/staff-entries',
   '/admin/reports',
 ];
 
