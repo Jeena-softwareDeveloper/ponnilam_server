@@ -208,7 +208,7 @@ export const getCenters = async (req: Request, res: Response): Promise<any> => {
       : enrichedCenters;
 
     if (paginate === 'true') {
-      return res.status(200).json(paginatedResponse(finalCenters, finalCenters.length, page, limit));
+      return res.status(200).json(paginatedResponse(finalCenters, total, page, limit));
     }
     return res.status(200).json(finalCenters);
   } catch (error) {
