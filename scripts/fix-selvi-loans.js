@@ -1,176 +1,163 @@
 /**
  * fix-selvi-loans.js
  *
- * Fixes the SELVI CHIKKARASAMPALAYAM loans issue:
+ * Fixes the SELVI CHIKKARASAMPALAYAM loans issue using PrismaClient:
  * 1. Deletes the mistakenly created 2nd cycle loans:
  *    - SCA001-L2, SCA002-L2, SCA003-L2, SCA004-L2, SCA005-L2
  * 2. Restores the true 1st cycle active loans:
  *    - SAT-L0252, SAT-L0253, SAT-L0254, SAT-L0255, SAT-L0256
  *    - Resets future schedules (Weeks 20 to 28, due 2026-10-19 to 2026-12-14) to PENDING
- *    - Sets outstandingAmount = 5850 (9 dues * 650)
+ *    - Sets outstandingAmount = 5850 (9 remaining dues * 650)
  *    - Sets status = ACTIVE
  *    - Replaces erroneous 'Pre-Close' ledger entries with 'Collection'
  *
  * Usage:
- *   node scripts/fix-selvi-loans.js [POSTGRES_URL] [--execute]
- *
- * If run without --execute, it performs a DRY-RUN and displays what will change.
+ *   Dry Run (preview) : node scripts/fix-selvi-loans.js
+ *   Live Execute      : node scripts/fix-selvi-loans.js --execute
  */
 
-const { Client } = require('pg');
+const { PrismaClient } = require('@prisma/client');
+require('dotenv').config({ path: '.env' });
 require('dotenv').config({ path: '.env.production' });
 require('dotenv').config();
 
-const explicitUrl = args.find(a => a.startsWith('postgres') && !a.includes('host:5432') && !a.includes('USER:PASSWORD') && !a.includes('user:password'));
-let connectionString = explicitUrl || process.env.DATABASE_URL;
-
-if (!connectionString || connectionString.includes('sqlite') || connectionString.includes('file:') || connectionString.includes('USER:PASSWORD@HOST') || connectionString.includes('user:password@host')) {
-  console.log('\n========================================================================');
-  console.log('  PONNILAM FIN CORP — FIX SELVI CHIKKARASAMPALAYAM LOANS');
-  console.log('========================================================================');
-  console.log('\n❌ Valid PostgreSQL connection string not found!');
-  console.log('\nTo find your database URL on this server, run:');
-  console.log('  grep DATABASE_URL .env.production .env');
-  console.log('\nThen run:');
-  console.log('  node scripts/fix-selvi-loans.js "YOUR_REAL_DATABASE_URL"');
-  console.log('  node scripts/fix-selvi-loans.js "YOUR_REAL_DATABASE_URL" --execute\n');
-  process.exit(1);
-}
+const prisma = new PrismaClient();
+const args = process.argv.slice(2);
+const isExecute = args.includes('--execute');
 
 const FIRST_CYCLE_LOAN_NUMBERS = ['SAT-L0252', 'SAT-L0253', 'SAT-L0254', 'SAT-L0255', 'SAT-L0256'];
 const SECOND_CYCLE_LOAN_NUMBERS = ['SCA001-L2', 'SCA002-L2', 'SCA003-L2', 'SCA004-L2', 'SCA005-L2'];
+const CUSTOMER_NOS = ['SCA001', 'SCA002', 'SCA003', 'SCA004', 'SCA005'];
 
 async function run() {
-  const client = new Client({
-    connectionString,
-    ssl: connectionString.includes('localhost') || connectionString.includes('127.0.0.1')
-      ? false
-      : { rejectUnauthorized: false }
-  });
-
   console.log('\n========================================================================');
   console.log('  PONNILAM FIN CORP — FIX SELVI CHIKKARASAMPALAYAM LOANS');
   console.log(`  MODE: ${isExecute ? '⚡ LIVE EXECUTE' : '🔍 DRY RUN (Preview only)'}`);
   console.log('========================================================================\n');
 
-  await client.connect();
-  console.log('Connected to PostgreSQL database.\n');
-
   try {
-    await client.query('BEGIN');
-
     // 1. Check L2 loans to delete
-    const l2Check = await client.query(`
-      SELECT id, "loanNumber", amount, status, "outstandingAmount"
-      FROM public."Loan"
-      WHERE "loanNumber" = ANY($1)
-    `, [SECOND_CYCLE_LOAN_NUMBERS]);
+    const l2Loans = await prisma.loan.findMany({
+      where: { loanNumber: { in: SECOND_CYCLE_LOAN_NUMBERS } },
+      select: { id: true, loanNumber: true, amount: true, status: true, outstandingAmount: true }
+    });
 
-    console.log(`[1] Found ${l2Check.rows.length} 2nd cycle loan(s) to remove:`);
-    console.table(l2Check.rows);
+    console.log(`[1] Found ${l2Loans.length} 2nd cycle loan(s) to remove:`);
+    console.table(l2Loans);
 
     // 2. Check 1st cycle loans to restore
-    const firstCycleCheck = await client.query(`
-      SELECT id, "loanNumber", amount, status, "outstandingAmount"
-      FROM public."Loan"
-      WHERE "loanNumber" = ANY($1)
-    `, [FIRST_CYCLE_LOAN_NUMBERS]);
+    const firstCycleLoans = await prisma.loan.findMany({
+      where: { loanNumber: { in: FIRST_CYCLE_LOAN_NUMBERS } },
+      select: { id: true, loanNumber: true, amount: true, status: true, outstandingAmount: true }
+    });
 
-    console.log(`\n[2] Found ${firstCycleCheck.rows.length} 1st cycle loan(s) to restore:`);
-    console.table(firstCycleCheck.rows);
+    console.log(`\n[2] Found ${firstCycleLoans.length} 1st cycle loan(s) to restore:`);
+    console.table(firstCycleLoans);
 
-    const firstCycleIds = firstCycleCheck.rows.map(r => r.id);
+    const firstCycleIds = firstCycleLoans.map(r => r.id);
 
-    // 3. Count future schedules that will be reset to PENDING
-    const schedCheck = await client.query(`
-      SELECT "loanId", COUNT(*) as count
-      FROM public."LoanSchedule"
-      WHERE "loanId" = ANY($1)
-        AND "dueDate" >= '2026-10-19 00:00:00'
-      GROUP BY "loanId"
-    `, [firstCycleIds]);
+    // 3. Check future schedules to reset
+    const futureSchedules = await prisma.loanSchedule.findMany({
+      where: {
+        loanId: { in: firstCycleIds },
+        dueDate: { gte: new Date('2026-10-19T00:00:00.000Z') }
+      },
+      select: { id: true, dueDate: true, status: true, amountPaid: true, loanId: true }
+    });
 
-    console.log('\n[3] Future schedules (Weeks 20-28) to reset to PENDING:');
-    console.table(schedCheck.rows);
+    console.log(`\n[3] Found ${futureSchedules.length} future schedule(s) (Weeks 20-28) to reset to PENDING.`);
 
     if (isExecute) {
-      console.log('\n--- Executing Fixes ---');
+      console.log('\n--- Executing Fixes in Transaction ---');
 
-      // Delete L2 schedules
-      const delSched = await client.query(`
-        DELETE FROM public."LoanSchedule"
-        WHERE "loanId" IN (
-          SELECT id FROM public."Loan" WHERE "loanNumber" = ANY($1)
-        )
-      `, [SECOND_CYCLE_LOAN_NUMBERS]);
-      console.log(`Deleted ${delSched.rowCount} schedules from 2nd cycle loans.`);
+      await prisma.$transaction(async (tx) => {
+        // Delete L2 schedules
+        const delSched = await tx.loanSchedule.deleteMany({
+          where: { loan: { loanNumber: { in: SECOND_CYCLE_LOAN_NUMBERS } } }
+        });
+        console.log(`  ✓ Deleted ${delSched.count} schedules from 2nd cycle loans.`);
 
-      // Delete L2 loans
-      const delLoans = await client.query(`
-        DELETE FROM public."Loan"
-        WHERE "loanNumber" = ANY($1)
-      `, [SECOND_CYCLE_LOAN_NUMBERS]);
-      console.log(`Deleted ${delLoans.rowCount} 2nd cycle loans.`);
+        // Delete L2 guarantors if any
+        const delGuar = await tx.loanGuarantor.deleteMany({
+          where: { loan: { loanNumber: { in: SECOND_CYCLE_LOAN_NUMBERS } } }
+        });
+        if (delGuar.count > 0) console.log(`  ✓ Deleted ${delGuar.count} loan guarantors.`);
 
-      // Restore schedules Weeks 20 to 28 to PENDING
-      const resetSched = await client.query(`
-        UPDATE public."LoanSchedule"
-        SET 
-          status = 'PENDING',
-          "amountPaid" = 0,
-          "paidDate" = NULL,
-          "collectionId" = NULL
-        WHERE "loanId" = ANY($1)
-          AND "dueDate" >= '2026-10-19 00:00:00'
-      `, [firstCycleIds]);
-      console.log(`Reset ${resetSched.rowCount} future schedules to PENDING.`);
+        // Delete L2 ledgers if any
+        const delLedger = await tx.loanLedger.deleteMany({
+          where: { loan: { loanNumber: { in: SECOND_CYCLE_LOAN_NUMBERS } } }
+        });
+        if (delLedger.count > 0) console.log(`  ✓ Deleted ${delLedger.count} loan ledger entries.`);
 
-      // Restore Loan outstandingAmount = 5850 and status = ACTIVE
-      const restoreLoans = await client.query(`
-        UPDATE public."Loan"
-        SET 
-          "outstandingAmount" = 5850,
-          "advanceBalance" = 0,
-          status = 'ACTIVE',
-          "updatedAt" = NOW()
-        WHERE id = ANY($1)
-      `, [firstCycleIds]);
-      console.log(`Restored ${restoreLoans.rowCount} 1st cycle loans to ACTIVE with outstanding Rs. 5,850.`);
+        // Delete L2 loans
+        const delLoans = await tx.loan.deleteMany({
+          where: { loanNumber: { in: SECOND_CYCLE_LOAN_NUMBERS } }
+        });
+        console.log(`  ✓ Deleted ${delLoans.count} 2nd cycle loans (${SECOND_CYCLE_LOAN_NUMBERS.join(', ')}).`);
 
-      // Fix LoanLedger
-      const fixLoanLedger = await client.query(`
-        UPDATE public."LoanLedger"
-        SET 
-          "transactionType" = 'Collection',
-          "closingBalance" = 5850
-        WHERE "loanId" = ANY($1)
-          AND "transactionType" = 'Pre-Close'
-      `, [firstCycleIds]);
-      console.log(`Corrected ${fixLoanLedger.rowCount} LoanLedger entries.`);
+        // Reset schedules Weeks 20 to 28 to PENDING
+        const resetSched = await tx.loanSchedule.updateMany({
+          where: {
+            loanId: { in: firstCycleIds },
+            dueDate: { gte: new Date('2026-10-19T00:00:00.000Z') }
+          },
+          data: {
+            status: 'PENDING',
+            amountPaid: 0,
+            paidDate: null,
+            collectionId: null
+          }
+        });
+        console.log(`  ✓ Reset ${resetSched.count} future schedules to PENDING.`);
 
-      // Fix CustomerLedger
-      const fixCustLedger = await client.query(`
-        UPDATE public."CustomerLedger"
-        SET "transactionType" = 'Collection'
-        WHERE "collectionId" IN (
-          SELECT id FROM public."Collection" WHERE "loanId" = ANY($1) AND "trnDate" >= '2026-10-11'
-        )
-        AND "transactionType" = 'Pre-Close'
-      `, [firstCycleIds]);
-      console.log(`Corrected ${fixCustLedger.rowCount} CustomerLedger entries.`);
+        // Restore Loan outstandingAmount = 5850 and status = ACTIVE
+        const restoreLoans = await tx.loan.updateMany({
+          where: { id: { in: firstCycleIds } },
+          data: {
+            outstandingAmount: 5850,
+            advanceBalance: 0,
+            status: 'ACTIVE',
+            updatedAt: new Date()
+          }
+        });
+        console.log(`  ✓ Restored ${restoreLoans.count} 1st cycle loans to ACTIVE with outstanding Rs. 5,850.`);
 
-      await client.query('COMMIT');
+        // Fix LoanLedger
+        const fixLoanLedger = await tx.loanLedger.updateMany({
+          where: {
+            loanId: { in: firstCycleIds },
+            transactionType: 'Pre-Close'
+          },
+          data: {
+            transactionType: 'Collection',
+            closingBalance: 5850
+          }
+        });
+        console.log(`  ✓ Corrected ${fixLoanLedger.count} LoanLedger entries from 'Pre-Close' to 'Collection'.`);
+
+        // Fix CustomerLedger
+        const fixCustLedger = await tx.customerLedger.updateMany({
+          where: {
+            customer: { customerNo: { in: CUSTOMER_NOS } },
+            transactionType: 'Pre-Close'
+          },
+          data: {
+            transactionType: 'Collection'
+          }
+        });
+        console.log(`  ✓ Corrected ${fixCustLedger.count} CustomerLedger entries from 'Pre-Close' to 'Collection'.`);
+      });
+
       console.log('\n🎉 ALL FIXES APPLIED SUCCESSFULLY! SELVI CHIKKARASAMPALAYAM loans are restored to 1st cycle active status.\n');
     } else {
-      await client.query('ROLLBACK');
       console.log('\nℹ️  Dry run completed. No changes committed to the database.');
-      console.log('To apply these changes, re-run with --execute\n');
+      console.log('To apply these changes live, re-run with:');
+      console.log('  node scripts/fix-selvi-loans.js --execute\n');
     }
   } catch (err) {
-    await client.query('ROLLBACK');
-    console.error('\n❌ Error occurred. Transaction rolled back:', err);
+    console.error('\n❌ Error occurred:', err);
   } finally {
-    await client.end();
+    await prisma.$disconnect();
   }
 }
 
