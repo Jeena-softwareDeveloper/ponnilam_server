@@ -24,7 +24,11 @@ export async function allocateCollection(
   schedules: ScheduleRow[],
   poolAmount: number,
   trnDate: Date,
-  collectionId: string
+  collectionId: string,
+  options?: {
+    isPreClose?: boolean;
+    actualAmount?: number;
+  }
 ) {
   let remaining = poolAmount;
   const targetDay = toCollectionDay(trnDate);
@@ -35,17 +39,41 @@ export async function allocateCollection(
     return sum + (s.emiAmount - (s.amountPaid || 0));
   }, 0);
 
-  // PRE-CLOSE detection: pool covers the entire remaining outstanding.
-  // Mark every unpaid schedule PAID regardless of due date so that
-  // sumUnpaidScheduleAmount returns 0 and the loan is correctly CLOSED.
-  const isPreClose = remaining >= totalUnpaid - 0.01;
+  // PRE-CLOSE is ONLY allowed if:
+  // 1) Explicitly requested (isPreClose option is true), OR
+  // 2) The actual cash/bank payment in this single transaction covers the full remaining schedule balance.
+  // Accumulated advance balance alone must NEVER trigger a pre-close payoff.
+  const actualPayment = options?.actualAmount !== undefined ? options.actualAmount : undefined;
+  const isPreClose = Boolean(
+    options?.isPreClose ||
+    (actualPayment !== undefined && totalUnpaid > 0 && actualPayment >= totalUnpaid - 0.01)
+  );
+
+  // Check if any unpaid schedule is due on or before targetDay
+  const hasDueOrOverdue = schedules.some(
+    (s) =>
+      UNPAID_SCHEDULE_STATUSES.includes(s.status as ScheduleStatus) &&
+      toCollectionDay(s.dueDate) <= targetDay
+  );
+
+  let upcomingAllocated = false;
 
   for (const schedule of schedules) {
     if (remaining <= 0) break;
-    // Normal collection stops at future-dated schedules; pre-close does not.
-    if (!isPreClose && toCollectionDay(schedule.dueDate) > targetDay) {
-      break;
+    const isFutureSchedule = toCollectionDay(schedule.dueDate) > targetDay;
+
+    if (!isPreClose && isFutureSchedule) {
+      // Normal installment collection stops at future-dated schedules.
+      // Exception: If no schedules were due on or before targetDay (e.g. center meeting
+      // day collection where firstDueDate or next schedule is a few days ahead in the same cycle),
+      // allow allocating to at most 1 upcoming schedule so the payment isn't trapped in advance.
+      if (!hasDueOrOverdue && !upcomingAllocated) {
+        upcomingAllocated = true;
+      } else {
+        break;
+      }
     }
+
     const due = schedule.emiAmount - (schedule.amountPaid || 0);
     if (due <= 0) continue;
 
@@ -71,6 +99,10 @@ export async function allocateCollection(
       });
       remaining = 0;
     }
+
+    if (upcomingAllocated) {
+      break;
+    }
   }
   return remaining;
 }
@@ -93,9 +125,10 @@ export async function processLoanCollection(
     centerId?: string;
     userBranchId?: string;
     isAdmin?: boolean;
+    isPreClose?: boolean;
   }
 ): Promise<ProcessCollectionResult> {
-  const { loanId, amount, trnDate, trnNumber, staffId, remarks, centerId, userBranchId, isAdmin } = params;
+  const { loanId, amount, trnDate, trnNumber, staffId, remarks, centerId, userBranchId, isAdmin, isPreClose } = params;
 
   if (amount <= 0) {
     return { collection: { id: '', trnNumber: '' }, skipped: true, skipReason: 'Amount must be greater than zero' };
@@ -179,9 +212,26 @@ export async function processLoanCollection(
     throw err;
   }
 
+  const explicitPreClose =
+    params.isPreClose === true ||
+    (Boolean(remarks) &&
+      (remarks!.toUpperCase().includes('ACCOUNT CLOSED') ||
+        remarks!.toUpperCase().includes('PRE-CLOSE')));
+
   const pool = amount + (loan.advanceBalance || 0);
 
-  const leftover = await allocateCollection(tx, loan.id, loan.schedules, pool, normalizedTrnDate, collection.id);
+  const leftover = await allocateCollection(
+    tx,
+    loan.id,
+    loan.schedules,
+    pool,
+    normalizedTrnDate,
+    collection.id,
+    {
+      isPreClose: explicitPreClose,
+      actualAmount: amount,
+    }
+  );
 
   const newScheduleOutstanding = await sumUnpaidScheduleAmount(tx, loan.id);
   let newOutstanding = newScheduleOutstanding;
@@ -211,6 +261,10 @@ export async function processLoanCollection(
     },
   });
 
+  const isActualPreClose =
+    newStatus === LoanStatus.CLOSED &&
+    (explicitPreClose || amount >= scheduleOutstanding - 0.01);
+
   const lastCustomerLedger = await tx.customerLedger.findFirst({
     where: { customerId: loan.customerId },
     orderBy: { createdAt: 'desc' },
@@ -220,7 +274,7 @@ export async function processLoanCollection(
 
   await tx.customerLedger.create({
     data: {
-      transactionType: newStatus === LoanStatus.CLOSED ? 'Pre-Close' : 'Collection',
+      transactionType: isActualPreClose ? 'Pre-Close' : 'Collection',
       amount,
       openingBalance: customerOpening,
       closingBalance: customerClosing,
@@ -240,7 +294,7 @@ export async function processLoanCollection(
 
   await tx.loanLedger.create({
     data: {
-      transactionType: newStatus === LoanStatus.CLOSED ? 'Pre-Close' : 'EMI Collection',
+      transactionType: isActualPreClose ? 'Pre-Close' : 'EMI Collection',
       amount,
       openingBalance: loanOpening,
       closingBalance: loanClosing,
@@ -303,7 +357,14 @@ export async function voidCollection(
       orderBy: { dueDate: 'asc' },
     });
     const pool = c.amount + advanceBalance;
-    advanceBalance = await allocateCollection(tx, loan.id, schedules, pool, c.trnDate, c.id);
+    const isPreCloseCollection =
+      Boolean(c.remarks) &&
+      (c.remarks!.toUpperCase().includes('ACCOUNT CLOSED') ||
+        c.remarks!.toUpperCase().includes('PRE-CLOSE'));
+    advanceBalance = await allocateCollection(tx, loan.id, schedules, pool, c.trnDate, c.id, {
+      isPreClose: isPreCloseCollection,
+      actualAmount: c.amount,
+    });
   }
 
   const newOutstanding = await sumUnpaidScheduleAmount(tx, loan.id);

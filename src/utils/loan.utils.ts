@@ -131,17 +131,53 @@ export type ScheduleAllocRow = ScheduleAmountRow & { id: string };
 export function allocateCollectionPool(
   schedules: ScheduleAllocRow[],
   poolAmount: number,
-  targetDay?: string
+  targetDay?: string,
+  options?: {
+    isPreClose?: boolean;
+    actualAmount?: number;
+  }
 ): { schedules: ScheduleAllocRow[]; leftover: number } {
   let remaining = poolAmount;
   const updated = schedules.map((s) => ({ ...s, amountPaid: s.amountPaid || 0 }));
 
+  const totalUnpaid = updated.reduce((sum, s) => {
+    if (!UNPAID_SCHEDULE_STATUSES.includes(s.status as ScheduleStatus)) return sum;
+    return sum + (s.emiAmount - (s.amountPaid || 0));
+  }, 0);
+
+  const actualPayment = options?.actualAmount !== undefined ? options.actualAmount : undefined;
+  const isPreClose = Boolean(
+    options?.isPreClose ||
+    (actualPayment !== undefined && totalUnpaid > 0 && actualPayment >= totalUnpaid - 0.01)
+  );
+
+  const hasDueOrOverdue = targetDay
+    ? updated.some(
+        (s) =>
+          UNPAID_SCHEDULE_STATUSES.includes(s.status as ScheduleStatus) &&
+          (s as any).dueDate &&
+          toCollectionDay((s as any).dueDate) <= targetDay
+      )
+    : true;
+
+  let upcomingAllocated = false;
+
   for (const schedule of updated) {
     if (remaining <= 0) break;
     if (!UNPAID_SCHEDULE_STATUSES.includes(schedule.status as ScheduleStatus)) continue;
-    if (targetDay && (schedule as any).dueDate && toCollectionDay((schedule as any).dueDate) > targetDay) {
-      break;
+
+    const isFutureSchedule = Boolean(
+      targetDay && (schedule as any).dueDate && toCollectionDay((schedule as any).dueDate) > targetDay
+    );
+
+    if (!isPreClose && isFutureSchedule) {
+      if (!hasDueOrOverdue && !upcomingAllocated) {
+        upcomingAllocated = true;
+      } else {
+        break;
+      }
     }
+
     const due = schedule.emiAmount - schedule.amountPaid;
     if (due <= 0) continue;
 
@@ -153,6 +189,10 @@ export function allocateCollectionPool(
       schedule.amountPaid += remaining;
       schedule.status = ScheduleStatus.PARTIAL;
       remaining = 0;
+    }
+
+    if (upcomingAllocated) {
+      break;
     }
   }
 

@@ -142,6 +142,59 @@ describe('allocateCollectionPool', () => {
     assert.equal(updated[1].status, ScheduleStatus.PENDING);
     assert.equal(leftover, 650);
   });
+
+  it('TC-COL-05: meeting day collection before first dueDate allocates to the single upcoming schedule and stops', () => {
+    const schedules = [
+      { id: '1', emiAmount: 750, amountPaid: 0, status: ScheduleStatus.PENDING, dueDate: '2026-10-26' },
+      { id: '2', emiAmount: 750, amountPaid: 0, status: ScheduleStatus.PENDING, dueDate: '2026-11-02' },
+      { id: '3', emiAmount: 750, amountPaid: 0, status: ScheduleStatus.PENDING, dueDate: '2026-11-09' },
+    ];
+    // Meeting on 2026-10-19. No schedule was due on or before 2026-10-19.
+    // Paying 750 should allocate to schedule #1 only, leaving #2 and #3 pending.
+    const { schedules: updated, leftover } = allocateCollectionPool(schedules, 750, '2026-10-19', {
+      actualAmount: 750,
+    });
+    assert.equal(updated[0].status, ScheduleStatus.PAID);
+    assert.equal(updated[1].status, ScheduleStatus.PENDING);
+    assert.equal(updated[2].status, ScheduleStatus.PENDING);
+    assert.equal(leftover, 0);
+    assert.equal(sumUnpaidFromSchedules(updated), 1500);
+  });
+
+  it('TC-COL-06: accumulated advance balance does not falsely pre-close future schedules', () => {
+    const schedules = [
+      { id: '1', emiAmount: 650, amountPaid: 0, status: ScheduleStatus.PENDING, dueDate: '2026-10-19' },
+      { id: '2', emiAmount: 650, amountPaid: 0, status: ScheduleStatus.PENDING, dueDate: '2026-10-26' },
+      { id: '3', emiAmount: 650, amountPaid: 0, status: ScheduleStatus.PENDING, dueDate: '2026-11-02' },
+    ];
+    // Total unpaid is 1950. Pool is 1950 (650 cash + 1300 advance balance).
+    // Actual cash paid is only 650. This must NOT trigger a pre-close payoff.
+    const { schedules: updated, leftover } = allocateCollectionPool(schedules, 1950, '2026-10-19', {
+      actualAmount: 650,
+    });
+    assert.equal(updated[0].status, ScheduleStatus.PAID);
+    assert.equal(updated[1].status, ScheduleStatus.PENDING);
+    assert.equal(updated[2].status, ScheduleStatus.PENDING);
+    assert.equal(leftover, 1300);
+    assert.equal(sumUnpaidFromSchedules(updated), 1300);
+  });
+
+  it('TC-COL-07: genuine full cash payoff correctly pre-closes all schedules', () => {
+    const schedules = [
+      { id: '1', emiAmount: 650, amountPaid: 0, status: ScheduleStatus.PENDING, dueDate: '2026-10-19' },
+      { id: '2', emiAmount: 650, amountPaid: 0, status: ScheduleStatus.PENDING, dueDate: '2026-10-26' },
+      { id: '3', emiAmount: 650, amountPaid: 0, status: ScheduleStatus.PENDING, dueDate: '2026-11-02' },
+    ];
+    // Customer pays full 1950 in cash
+    const { schedules: updated, leftover } = allocateCollectionPool(schedules, 1950, '2026-10-19', {
+      actualAmount: 1950,
+    });
+    assert.equal(updated[0].status, ScheduleStatus.PAID);
+    assert.equal(updated[1].status, ScheduleStatus.PAID);
+    assert.equal(updated[2].status, ScheduleStatus.PAID);
+    assert.equal(leftover, 0);
+    assert.equal(sumUnpaidFromSchedules(updated), 0);
+  });
 });
 
 describe('resolveLastEmiAmount', () => {
