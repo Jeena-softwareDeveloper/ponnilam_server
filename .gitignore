@@ -16,3 +16,4 @@ logs/
 *.sqlite3
 *.mdb
 *.sql
+!scripts/*.sql

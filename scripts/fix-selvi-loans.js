@@ -21,20 +21,19 @@ const { Client } = require('pg');
 require('dotenv').config({ path: '.env.production' });
 require('dotenv').config();
 
-const args = process.argv.slice(2);
-const isExecute = args.includes('--execute');
-const connectionString = args.find(a => a.startsWith('postgres')) || process.env.DATABASE_URL;
+const explicitUrl = args.find(a => a.startsWith('postgres') && !a.includes('host:5432') && !a.includes('USER:PASSWORD') && !a.includes('user:password'));
+let connectionString = explicitUrl || process.env.DATABASE_URL;
 
-if (!connectionString || connectionString.includes('sqlite') || connectionString.includes('file:') || connectionString.includes('USER:PASSWORD@HOST')) {
+if (!connectionString || connectionString.includes('sqlite') || connectionString.includes('file:') || connectionString.includes('USER:PASSWORD@HOST') || connectionString.includes('user:password@host')) {
   console.log('\n========================================================================');
   console.log('  PONNILAM FIN CORP — FIX SELVI CHIKKARASAMPALAYAM LOANS');
   console.log('========================================================================');
-  console.log('\n❌ PostgreSQL connection string required!');
-  console.log('Usage:');
-  console.log('  Dry Run : node scripts/fix-selvi-loans.js "postgresql://user:password@host:5432/dbname"');
-  console.log('  Execute : node scripts/fix-selvi-loans.js "postgresql://user:password@host:5432/dbname" --execute');
-  console.log('\nOr run the SQL script directly in pgAdmin / DBeaver / psql:');
-  console.log('  scripts/fix-selvi-loans.sql\n');
+  console.log('\n❌ Valid PostgreSQL connection string not found!');
+  console.log('\nTo find your database URL on this server, run:');
+  console.log('  grep DATABASE_URL .env.production .env');
+  console.log('\nThen run:');
+  console.log('  node scripts/fix-selvi-loans.js "YOUR_REAL_DATABASE_URL"');
+  console.log('  node scripts/fix-selvi-loans.js "YOUR_REAL_DATABASE_URL" --execute\n');
   process.exit(1);
 }
 
