@@ -202,7 +202,7 @@ export const getCenterDetailReport = async (req: Request, res: Response) => {
         }, 0);
         return {
           ...center,
-          totalMembers: center.customers.length,
+          actualMembersCount: center.customers.length,
           activeLoans: activeLoans.length,
           totalOutstanding,
           expectedCollection,

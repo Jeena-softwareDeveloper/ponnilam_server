@@ -191,7 +191,7 @@ export const getCenters = async (req: Request, res: Response): Promise<any> => {
         groupsCount: center.groups?.length || 0,
         mappedCustomersCount: customers.filter((c) => c.centerMemberType !== 'IMPORT').length,
         importCustomersCount: customers.filter((c) => c.centerMemberType === 'IMPORT').length,
-        totalMembers: customers.length,
+        actualMembersCount: customers.length,
         hasPendingSubmission: Boolean(pInfo && pInfo.count > 0),
         pendingSubmissionCount: pInfo?.count || 0,
         pendingSubmissionTotal: pInfo?.amount || 0,
@@ -283,7 +283,8 @@ export const getCenterById = async (req: Request, res: Response): Promise<any> =
       firstEmiDate: firstEmiDateStr,
       emiDayName,
       emiDayOfWeek,
-      totalMembers: customers.filter((c) => c.centerMemberType !== 'IMPORT').length,
+      mappedCustomersCount: customers.filter((c) => c.centerMemberType !== 'IMPORT').length,
+      actualMembersCount: customers.length,
       importCustomersCount: customers.filter((c) => c.centerMemberType === 'IMPORT').length,
     });
   } catch (error) {
