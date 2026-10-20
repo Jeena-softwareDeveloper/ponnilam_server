@@ -9,6 +9,10 @@ function sortCustomersByRegistration<
   T extends { createdAt?: Date | string | null; customerNo?: string | null },
 >(customers: T[]): T[] {
   return [...customers].sort((a, b) => {
+    if (a.customerNo && b.customerNo) {
+      const cmp = String(a.customerNo).localeCompare(String(b.customerNo), undefined, { numeric: true });
+      if (cmp !== 0) return cmp;
+    }
     const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
     const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
     if (aTime !== bTime) return aTime - bTime;
