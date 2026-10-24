@@ -271,6 +271,203 @@ export const getStaffEntriesSummary = async (req: Request, res: Response): Promi
 };
 
 /**
+ * Shared helper for paginated staff entries by status (PENDING or CONFIRMED)
+ */
+async function getPaginatedStaffEntriesByStatus(
+  req: Request,
+  res: Response,
+  targetStatus: 'PENDING' | 'CONFIRMED'
+): Promise<any> {
+  try {
+    const user = (req as any).user;
+    const {
+      branchId,
+      staffId,
+      centerId,
+      search,
+      date,
+      page = 1,
+      limit = 10,
+    } = req.query;
+
+    const isAdmin = isAdminUser(user);
+    const filterBranchId = isAdmin
+      ? branchId && branchId !== 'all' ? String(branchId) : undefined
+      : user?.branchId;
+
+    const where: any = {
+      status: targetStatus,
+    };
+
+    if (filterBranchId) {
+      where.branchId = filterBranchId;
+    }
+    if (staffId && staffId !== 'all') {
+      where.staffId = String(staffId);
+    }
+    if (centerId && centerId !== 'all') {
+      where.centerId = String(centerId);
+    }
+    if (date) {
+      const d = new Date(String(date));
+      if (!isNaN(d.getTime())) {
+        const startOfDay = new Date(d);
+        startOfDay.setHours(0, 0, 0, 0);
+        const endOfDay = new Date(d);
+        endOfDay.setHours(23, 59, 59, 999);
+        where.trnDate = { gte: startOfDay, lte: endOfDay };
+      }
+    }
+
+    // Fetch entries matching the status and filters
+    const entries = await prisma.staffEntry.findMany({
+      where,
+      include: {
+        branch: { select: { id: true, name: true, code: true } },
+        staff: { select: { id: true, name: true, staffNo: true, username: true } },
+        center: { select: { id: true, name: true, code: true, repaymentType: true } },
+      },
+      orderBy: { trnDate: 'desc' },
+    });
+
+    // Group entries into Center Batches by center + staff + trnDate (day)
+    const batchMap = new Map<string, any>();
+
+    for (const e of entries) {
+      const dateKey = e.trnDate ? new Date(e.trnDate).toISOString().split('T')[0] : 'nodate';
+      // For pending, group by center and staff so cashier can confirm in one click.
+      // For confirmed, grouping by center + staff + date keeps distinct daily logs.
+      const key = targetStatus === 'PENDING' 
+        ? `${e.staffId}_${e.centerId}` 
+        : `${e.staffId}_${e.centerId}_${dateKey}`;
+
+      if (!batchMap.has(key)) {
+        batchMap.set(key, {
+          id: key,
+          centerId: e.centerId,
+          name: e.center?.name || 'Unknown Center',
+          code: e.center?.code || 'CTR',
+          repaymentType: e.center?.repaymentType || 'WEEKLY',
+          staffId: e.staffId,
+          staffName: e.staff?.name || 'Unknown Staff',
+          branchId: e.branchId,
+          branchName: e.branch?.name || '',
+          count: 0,
+          amount: 0,
+          latestDate: e.trnDate,
+          status: e.status,
+          entryIds: [],
+        });
+      }
+
+      const batch = batchMap.get(key);
+      batch.count += 1;
+      batch.amount += e.amount;
+      batch.entryIds.push(e.id);
+      if (e.trnDate && new Date(e.trnDate).getTime() > new Date(batch.latestDate).getTime()) {
+        batch.latestDate = e.trnDate;
+      }
+    }
+
+    let allBatches = Array.from(batchMap.values());
+
+    // Apply search query filter if provided
+    if (search && String(search).trim()) {
+      const q = String(search).toLowerCase().trim();
+      allBatches = allBatches.filter(
+        (b) =>
+          b.name.toLowerCase().includes(q) ||
+          b.code.toLowerCase().includes(q) ||
+          b.staffName.toLowerCase().includes(q) ||
+          b.branchName.toLowerCase().includes(q)
+      );
+    }
+
+    // Sort: newest first
+    allBatches.sort((a, b) => new Date(b.latestDate).getTime() - new Date(a.latestDate).getTime());
+
+    // Pagination calculations
+    const pageNum = Math.max(1, Number(page) || 1);
+    const limitNum = Math.max(1, Number(limit) || 10);
+    const totalItems = allBatches.length;
+    const totalPages = Math.ceil(totalItems / limitNum) || 1;
+    const paginatedData = allBatches.slice((pageNum - 1) * limitNum, pageNum * limitNum);
+
+    // Compute live system summaries for both Pending and Confirmed tabs
+    const summaryBranchWhere = filterBranchId ? { branchId: filterBranchId } : {};
+
+    // Total pending summary
+    const pendingEntriesAll = await prisma.staffEntry.findMany({
+      where: { ...summaryBranchWhere, status: 'PENDING' },
+      select: { centerId: true, staffId: true, amount: true },
+    });
+    const pendingCentersSet = new Set(pendingEntriesAll.map(p => `${p.staffId}_${p.centerId}`));
+    const pendingStaffSet = new Set(pendingEntriesAll.map(p => p.staffId));
+    const pendingAmountTotal = pendingEntriesAll.reduce((sum, p) => sum + p.amount, 0);
+
+    // Total confirmed summary
+    const confirmedEntriesAll = await prisma.staffEntry.findMany({
+      where: { ...summaryBranchWhere, status: 'CONFIRMED' },
+      select: { centerId: true, staffId: true, trnDate: true, amount: true },
+    });
+    const confirmedCentersSet = new Set(
+      confirmedEntriesAll.map(c => `${c.staffId}_${c.centerId}_${c.trnDate ? new Date(c.trnDate).toISOString().split('T')[0] : ''}`)
+    );
+    const confirmedStaffSet = new Set(confirmedEntriesAll.map(c => c.staffId));
+    const confirmedAmountTotal = confirmedEntriesAll.reduce((sum, c) => sum + c.amount, 0);
+
+    // Fetch branches and staffs for filter dropdowns
+    const branches = await prisma.branch.findMany({
+      where: { isActive: true },
+      select: { id: true, name: true, code: true },
+      orderBy: { name: 'asc' },
+    });
+
+    const staffs = await prisma.staff.findMany({
+      where: {
+        isActive: true,
+        ...(filterBranchId ? { branchId: filterBranchId } : {}),
+      },
+      select: { id: true, name: true, staffNo: true, branchId: true },
+      orderBy: { name: 'asc' },
+    });
+
+    return res.json({
+      data: paginatedData,
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        totalItems,
+        totalPages,
+      },
+      summary: {
+        pendingCenters: pendingCentersSet.size,
+        pendingMembers: pendingEntriesAll.length,
+        pendingAmount: pendingAmountTotal,
+        pendingStaffCount: pendingStaffSet.size,
+        confirmedCenters: confirmedCentersSet.size,
+        confirmedMembers: confirmedEntriesAll.length,
+        confirmedAmount: confirmedAmountTotal,
+        confirmedStaffCount: confirmedStaffSet.size,
+      },
+      branches,
+      staffs,
+    });
+  } catch (error: any) {
+    console.error(`Get ${targetStatus} Staff Entries Error:`, error);
+    return res.status(500).json({ error: error.message || `Failed to fetch ${targetStatus.toLowerCase()} staff entries` });
+  }
+}
+
+export const getPendingStaffEntries = async (req: Request, res: Response): Promise<any> => {
+  return getPaginatedStaffEntriesByStatus(req, res, 'PENDING');
+};
+
+export const getConfirmedStaffEntries = async (req: Request, res: Response): Promise<any> => {
+  return getPaginatedStaffEntriesByStatus(req, res, 'CONFIRMED');
+};
+
+/**
  * Detailed List of Staff Entries:
  * Filtered by branch, staff, center, status, date
  */
@@ -355,10 +552,25 @@ export const getStaffEntries = async (req: Request, res: Response): Promise<any>
       orderBy: { createdAt: 'desc' },
     });
 
+    const collectionIds = entries.map((e) => e.collectionId).filter(Boolean) as string[];
+    let collectionMap = new Map<string, string>();
+    if (collectionIds.length > 0) {
+      const cols = await prisma.collection.findMany({
+        where: { id: { in: collectionIds } },
+        select: { id: true, trnNumber: true },
+      });
+      collectionMap = new Map(cols.map((c) => [c.id, c.trnNumber]));
+    }
+
+    const entriesWithTrn = entries.map((e) => ({
+      ...e,
+      trnNumber: e.collectionId ? collectionMap.get(e.collectionId) || null : null,
+    }));
+
     const totalAmount = entries.reduce((sum, e) => sum + e.amount, 0);
 
     res.json({
-      entries,
+      entries: entriesWithTrn,
       count: entries.length,
       totalAmount,
     });
